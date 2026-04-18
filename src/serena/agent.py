@@ -516,7 +516,8 @@ class SerenaAgent:
         :param memory_log_handler: a MemoryLogHandler instance from which to read log messages; if None, a new one will be created
             if necessary.
         """
-        self._active_project: Project | None = None
+        self._active_projects: dict[str, Project] = {}  # project_name → Project instance
+        self._session_projects: dict[str, str | None] = {}  # session_id → project_name (cached per session)
         self._project_activation_callback = project_activation_callback
         self._gui_log_viewer: Optional["GuiLogViewer"] = None
         self._dashboard_manager: DashboardManager | None = None
@@ -629,7 +630,7 @@ class SerenaAgent:
 
         # determine the base toolset defining the set of exposed tools (which e.g. the MCP shall see),
         self._base_toolset = self._create_base_toolset(
-            self.serena_config, self._language_backend, self._context, self._active_modes, self._active_project
+            self.serena_config, self._language_backend, self._context, self._active_modes, self.get_active_project()
         )
         self._exposed_tools = self._base_toolset.to_available_tools(self._all_tools)
         log.info(f"Number of exposed tools: {len(self._exposed_tools)}. Exposed tools: {self._exposed_tools.tool_names}")
@@ -775,8 +776,8 @@ class SerenaAgent:
         return self._task_executor.get_last_executed_task()
 
     def get_language_server_manager(self) -> LanguageServerManager | None:
-        if self._active_project is not None:
-            return self._active_project.language_server_manager
+        if self._active_projects:
+            return next(iter(self._active_projects.values())).language_server_manager
         return None
 
     def get_language_server_manager_or_raise(self) -> LanguageServerManager:
@@ -856,13 +857,32 @@ class SerenaAgent:
 
     def get_active_project(self) -> Project | None:
         """
-        :return: the active project or None if no project is active
+        :return: the first active project or None if no project is active.
+            For backward compatibility, returns the first project in the active set.
+            Use get_active_project_by_name() for specific project lookup.
         """
-        return self._active_project
+        if self._active_projects:
+            return next(iter(self._active_projects.values()))
+        return None
+
+    def get_active_project_by_name(self, name: str) -> Project | None:
+        """
+        :param name: the project name
+        :return: the active project with the given name, or None if not active
+        """
+        return self._active_projects.get(name)
+
+    def get_all_active_projects(self) -> dict[str, Project]:
+        """
+        :return: a copy of the dict mapping project names to active Project instances
+        """
+        return dict(self._active_projects)
 
     def get_active_project_or_raise(self) -> Project:
         """
-        :return: the active project or raises an exception if no project is active
+        :return: the first active project or raises an exception if no project is active.
+            For backward compatibility. Prefer get_active_project_by_name() when multiple
+            projects may be active.
         """
         project = self.get_active_project()
         if project is None:
@@ -939,10 +959,19 @@ class SerenaAgent:
 
     def get_project_activation_message(self, session_id: str) -> str:
         """
-        :return: a message providing information about the project upon activation (e.g. programming language, memories, initial prompt)
+        :return: a message providing information about the first active project upon activation.
+            For multi-project scenarios, use _get_project_activation_message(project) instead.
         :raise: AssertionError if no project is active
         """
-        proj = self._active_project
+        proj = self.get_active_project()
+        assert proj is not None, "A project must be active before calling this."
+        return self._get_project_activation_message(proj)
+
+    def _get_project_activation_message(self, project: Project) -> str:
+        """
+        :return: a message providing information about the given project upon activation.
+        """
+        proj = project
         assert proj is not None, "A project must be active before calling this."
 
         # Note: The activation message is always returned in full, even if it was already provided in the current session,
@@ -996,8 +1025,9 @@ class SerenaAgent:
         """
         self._active_modes = ActiveModes()
         self._active_modes.apply(self.serena_config)
-        if self._active_project:
-            self._active_modes.apply(self._active_project.project_config)
+        if self._active_projects:
+            first_project = next(iter(self._active_projects.values()))
+            self._active_modes.apply(first_project.project_config)
         if self._mode_overrides:
             self._active_modes.apply(self._mode_overrides)
         if log_message:
@@ -1013,10 +1043,11 @@ class SerenaAgent:
         # apply modes
         tool_set = self._base_toolset.apply(*self._active_modes.get_modes())
 
-        # apply active project configuration (if any)
-        if self._active_project is not None:
-            tool_set = tool_set.apply(self._active_project.project_config)
-            if self._active_project.project_config.read_only:
+        # apply active project configuration (if any) - uses the first active project for backward compat
+        first_project = self.get_active_project()
+        if first_project is not None:
+            tool_set = tool_set.apply(first_project.project_config)
+            if first_project.project_config.read_only:
                 tool_set = tool_set.without_editing_tools()
 
         self._active_tools = tool_set.to_available_tools(self._all_tools)
@@ -1065,15 +1096,17 @@ class SerenaAgent:
         """
         return self._language_backend == LanguageBackend.LSP
 
-    def _activate_project(self, project: Project, update_active_modes: bool = True, update_active_tools: bool = True) -> bool:
+    def _add_active_project(self, project: Project, update_active_modes: bool = True, update_active_tools: bool = True) -> bool:
         """
-        :return: True if the project was newly activated, False if it was already active
+        Add a project to the active set. Does NOT shutdown other active projects.
+
+        :return: True if the project was newly added, False if it was already active
         """
         # check if the project is already active
-        if self._active_project is not None and self._active_project.project_root == project.project_root:
+        if project.project_name in self._active_projects:
             return False
 
-        log.info(f"Activating {project.project_name} at {project.project_root}")
+        log.info(f"Adding {project.project_name} at {project.project_root} to active projects")
 
         # check if the project requires a different language backend than the one initialized at startup
         project_backend = project.project_config.language_backend
@@ -1085,12 +1118,7 @@ class SerenaAgent:
                 f"(2) Configure one MCP server per backend in your client."
             )
 
-        # shut down the previously active project to release its language server processes
-        if self._active_project is not None:
-            log.info(f"Shutting down previously active project '{self._active_project.project_name}' before switching")
-            self._active_project.shutdown()
-
-        self._active_project = project
+        self._active_projects[project.project_name] = project
         project.set_agent(self)
 
         if update_active_modes:
@@ -1108,7 +1136,7 @@ class SerenaAgent:
         def init_language_server_manager() -> None:
             # start the language server
             with LogTime("Language server initialization", logger=log):
-                self.reset_language_server_manager()
+                project.create_language_server_manager()
 
         # initialize the language server in the background (if in language server mode)
         if self.get_language_backend().is_lsp():
@@ -1122,6 +1150,39 @@ class SerenaAgent:
             self._dashboard_manager.update_active_project(self._active_project)
 
         return True
+
+    def _remove_active_project(self, project_name: str) -> bool:
+        """
+        Remove a project from the active set and shutdown its resources.
+
+        :param project_name: the name of the project to remove
+        :return: True if the project was removed, False if it wasn't active
+        """
+        project = self._active_projects.pop(project_name, None)
+        if project is None:
+            return False
+
+        log.info(f"Removing {project_name} from active projects")
+        project.shutdown()
+
+        # Clean up session cache entries for this project
+        sessions_to_clear = [sid for sid, pname in self._session_projects.items() if pname == project_name]
+        for sid in sessions_to_clear:
+            del self._session_projects[sid]
+
+        # Update modes and tools since the project is no longer active
+        self._update_active_modes()
+        self._update_active_tools()
+
+        return True
+
+    def _activate_project(self, project: Project, update_active_modes: bool = True, update_active_tools: bool = True) -> bool:
+        """
+        Legacy method for backward compatibility. Adds project to active set.
+
+        :return: True if the project was newly activated, False if it was already active
+        """
+        return self._add_active_project(project, update_active_modes=update_active_modes, update_active_tools=update_active_tools)
 
     def activate_project_from_path_or_name(
         self, project_root_or_name: str, update_active_modes: bool = True, update_active_tools: bool = True
@@ -1176,12 +1237,13 @@ class SerenaAgent:
         result_str = "Current configuration:\n"
         result_str += f"Serena version: {self.version}\n"
         result_str += f"Loglevel: {self.serena_config.log_level}, trace_lsp_communication={self.serena_config.trace_lsp_communication}\n"
-        if self._active_project is not None:
-            result_str += f"Active project: {self._active_project.project_name}\n"
+        first_project = self.get_active_project()
+        if first_project is not None:
+            result_str += f"Active project: {first_project.project_name}\n"
         else:
             result_str += "No active project\n"
         result_str += f"Language backend: {self._language_backend.value}"
-        if self._active_project and self._active_project.project_config.language_backend is not None:
+        if first_project and first_project.project_config.language_backend is not None:
             result_str += " (project override)"
         result_str += f" (global default: {self.serena_config.language_backend.value})\n"
         result_str += "Available projects:\n" + "\n".join(list(self.serena_config.project_names)) + "\n"
@@ -1256,10 +1318,12 @@ class SerenaAgent:
         Shutdown handler of the agent, freeing resources and stopping background tasks.
         """
         log.info("SerenaAgent is shutting down ...")
-        if self._active_project is not None:
-            log.info(f"Shutting down active project '{self._active_project.project_name}' ...")
-            self._active_project.shutdown(timeout=timeout)
-            self._active_project = None
+        # Shutdown all active projects
+        for project_name, project in list(self._active_projects.items()):
+            log.info(f"Shutting down active project '{project_name}' ...")
+            project.shutdown(timeout=timeout)
+        self._active_projects.clear()
+        self._session_projects.clear()
         if self._gui_log_viewer:
             log.info("Stopping the GUI log window ...")
             self._gui_log_viewer.stop()
@@ -1291,13 +1355,21 @@ class SerenaAgent:
     @contextmanager
     def active_project_context(self, project: Project) -> Iterator[None]:
         """
-        Context manager for temporarily setting/overriding the active project
+        Context manager for temporarily setting/overriding the active project.
+        This does NOT shutdown the project - it only swaps the reference returned
+        by get_active_project(). For multi-project scenarios, prefer using
+        resolve_session_project() or passing cwd to tool calls.
 
-        :param project: the project to be active
+        :param project: the project to be temporarily active
         """
-        original_project = self._active_project
-        self._active_project = project
+        original_project = self.get_active_project()
+        # Temporarily insert the project if not already active
+        was_already_active = project.project_name in self._active_projects
+        if not was_already_active:
+            self._active_projects[project.project_name] = project
         try:
             yield
         finally:
-            self._active_project = original_project
+            # Remove if we added it temporarily
+            if not was_already_active:
+                self._active_projects.pop(project.project_name, None)
