@@ -919,6 +919,52 @@ class SerenaAgent:
                 best_len = len(root)
         return best_match
 
+    def resolve_session_project(self, session_id: str | None, cwd: str | None) -> Project | None:
+        """
+        Resolve the project for a tool call based on session and working directory.
+
+        Resolution order:
+        1. If cwd is provided, resolve it to a project via longest-prefix matching
+           and cache the result for the session
+        2. Fall back to the session-cached project name
+        3. Fall back to the first active project (backward compatibility)
+
+        :param session_id: the MCP session/client identifier
+        :param cwd: the current working directory of the tool call
+        :return: the resolved Project, or None if no project can be determined
+        """
+        # Step 1: Try to resolve from cwd
+        if cwd:
+            project = self.resolve_project_for_path(cwd)
+            if project:
+                # Cache for this session
+                if session_id:
+                    self._session_projects[session_id] = project.project_name
+                return project
+
+        # Step 2: Fall back to session cache
+        if session_id:
+            cached_name = self._session_projects.get(session_id)
+            if cached_name:
+                project = self._active_projects.get(cached_name)
+                if project:
+                    return project
+
+        # Step 3: Fall back to first active project (backward compat)
+        return self.get_active_project()
+
+    def get_session_project(self, session_id: str) -> Project | None:
+        """
+        Get the cached project for a session without resolving from cwd.
+
+        :param session_id: the MCP session/client identifier
+        :return: the cached Project, or None
+        """
+        cached_name = self._session_projects.get(session_id)
+        if cached_name:
+            return self._active_projects.get(cached_name)
+        return None
+
     def set_modes(self, mode_names: list[str]) -> None:
         """
         Set the current mode configurations.
