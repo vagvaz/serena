@@ -57,7 +57,14 @@ class ClangdLanguageServer(SolidLanguageServer):
         )
 
     def _compile_commands_fingerprint(self) -> str | None:
-        compile_db_path = os.path.join(self.repository_root_path, "compile_commands.json")
+        cpp_settings: dict[str, Any] = self._custom_settings or {}
+        compile_commands_dir = cpp_settings.get("compile_commands_dir")
+        if compile_commands_dir:
+            source_dir = compile_commands_dir if os.path.isabs(compile_commands_dir) else os.path.join(self.repository_root_path, compile_commands_dir)
+        else:
+            source_dir = self.repository_root_path
+
+        compile_db_path = os.path.join(source_dir, "compile_commands.json")
         if not os.path.exists(compile_db_path):
             return None
 
@@ -92,7 +99,16 @@ class ClangdLanguageServer(SolidLanguageServer):
         Returns the path to the serena directory containing the transformed database,
         or None if no transformation was needed.
         """
-        compile_db_path = os.path.join(self.repository_root_path, "compile_commands.json")
+        cpp_settings: dict[str, Any] = self._custom_settings or {}
+
+        # Determine source directory: use compile_commands_dir if configured, else project root
+        compile_commands_dir_setting = cpp_settings.get("compile_commands_dir")
+        if compile_commands_dir_setting:
+            source_dir = compile_commands_dir_setting if os.path.isabs(compile_commands_dir_setting) else os.path.join(self.repository_root_path, compile_commands_dir_setting)
+        else:
+            source_dir = self.repository_root_path
+
+        compile_db_path = os.path.join(source_dir, "compile_commands.json")
 
         if not os.path.exists(compile_db_path):
             # No compile_commands.json, nothing to do
@@ -116,24 +132,26 @@ class ClangdLanguageServer(SolidLanguageServer):
 
             if not has_relative:
                 # No relative paths found, no need to create transformed database
-                return None
+                # But still return the source directory so clangd uses it
+                return source_dir if compile_commands_dir_setting else None
 
-            # Get the target directory from ls_specific_settings, default to .serena
-            cpp_settings: dict[str, Any] = self._custom_settings or {}
-            compile_commands_rel_dir = cpp_settings.get("compile_commands_dir", ".serena")
-            compile_commands_dir = os.path.join(self.repository_root_path, compile_commands_rel_dir)
-            os.makedirs(compile_commands_dir, exist_ok=True)
+            # Determine target directory: use compile_commands_dir if configured, else .serena
+            if compile_commands_dir_setting:
+                target_dir = compile_commands_dir_setting if os.path.isabs(compile_commands_dir_setting) else os.path.join(self.repository_root_path, compile_commands_dir_setting)
+            else:
+                target_dir = os.path.join(self.repository_root_path, ".serena")
+            os.makedirs(target_dir, exist_ok=True)
 
             # Write the transformed compile_commands.json
             # clangd looks for compile_commands.json in the --compile-commands-dir
-            compile_commands_path = os.path.join(compile_commands_dir, "compile_commands.json")
+            compile_commands_path = os.path.join(target_dir, "compile_commands.json")
             with open(compile_commands_path, "w", encoding="utf-8") as f:
                 json.dump(compile_commands, f, indent=2)
 
             # Track the directory for --compile-commands-dir
 
             log.info(f"Created serena compilation database with absolute paths at {compile_commands_path}")
-            return compile_commands_dir
+            return target_dir
 
         except (OSError, json.JSONDecodeError) as e:
             log.warning(f"Failed to prepare compile_commands.json: {e}")
@@ -218,36 +236,34 @@ class ClangdLanguageServer(SolidLanguageServer):
 
             clangd_ls_dir = os.path.join(self._ls_resources_dir, "clangd")
 
-            try:
-                dep = deps.get_single_dep_for_current_platform()
-            except RuntimeError:
-                dep = None
+            # Always check for system-installed clangd first, regardless of prebuilt binary availability
+            clangd_executable_path = shutil.which("clangd")
+            if clangd_executable_path:
+                log.info(f"Using system-installed clangd at {clangd_executable_path}")
+                return clangd_executable_path
 
             if dep is None:
-                # No prebuilt binary available, look for system-installed clangd
-                clangd_executable_path = shutil.which("clangd")
-                if not clangd_executable_path:
-                    raise FileNotFoundError(
-                        "Clangd is not installed on your system.\n"
-                        + "Please install clangd using your system package manager:\n"
-                        + "  Ubuntu/Debian: sudo apt-get install clangd\n"
-                        + "  Fedora/RHEL: sudo dnf install clang-tools-extra\n"
-                        + "  Arch Linux: sudo pacman -S clang\n"
-                        + "See https://clangd.llvm.org/installation for more details."
-                    )
-                log.info(f"Using system-installed clangd at {clangd_executable_path}")
-            else:
-                # Standard download and install for platforms with prebuilt binaries
-                clangd_executable_path = deps.binary_path(clangd_ls_dir)
-                if not os.path.exists(clangd_executable_path):
-                    log.info(f"Clangd executable not found at {clangd_executable_path}. Downloading from {dep.url}")
-                    _ = deps.install(clangd_ls_dir)
-                if not os.path.exists(clangd_executable_path):
-                    raise FileNotFoundError(
-                        f"Clangd executable not found at {clangd_executable_path}.\n"
-                        + "Make sure you have installed clangd. See https://clangd.llvm.org/installation"
-                    )
-                os.chmod(clangd_executable_path, 0o755)
+                # No prebuilt binary available and no system clangd found
+                raise FileNotFoundError(
+                    "Clangd is not installed on your system.\n"
+                    + "Please install clangd using your system package manager:\n"
+                    + "  Ubuntu/Debian: sudo apt-get install clangd\n"
+                    + "  Fedora/RHEL: sudo dnf install clang-tools-extra\n"
+                    + "  Arch Linux: sudo pacman -S clang\n"
+                    + "See https://clangd.llvm.org/installation for more details."
+                )
+
+            # Standard download and install for platforms with prebuilt binaries
+            clangd_executable_path = deps.binary_path(clangd_ls_dir)
+            if not os.path.exists(clangd_executable_path):
+                log.info(f"Clangd executable not found at {clangd_executable_path}. Downloading from {dep.url}")
+                _ = deps.install(clangd_ls_dir)
+            if not os.path.exists(clangd_executable_path):
+                raise FileNotFoundError(
+                    f"Clangd executable not found at {clangd_executable_path}.\n"
+                    + "Make sure you have installed clangd. See https://clangd.llvm.org/installation"
+                )
+            os.chmod(clangd_executable_path, 0o755)
             return clangd_executable_path
 
         def _create_launch_command(self, core_path: str) -> list[str]:
