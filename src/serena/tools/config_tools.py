@@ -19,6 +19,19 @@ class OpenDashboardTool(Tool, ToolMarkerOptional, ToolMarkerDoesNotRequireActive
             return f"Serena web dashboard could not be opened automatically; tell the user to open it via {self.agent.get_dashboard_url()}"
 
 
+class RestartDashboardTool(Tool, ToolMarkerDoesNotRequireActiveProject):
+    """
+    Restarts the dashboard web server without affecting LSP processes or tool execution.
+    Useful after modifying dashboard templates, CSS, or Python code.
+    """
+
+    def apply(self) -> str:
+        """
+        Restarts the dashboard web server.
+        """
+        return self.agent.restart_dashboard()
+
+
 class ActivateProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
     """
     Activates a project based on the project name or path.

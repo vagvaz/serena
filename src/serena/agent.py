@@ -674,6 +674,39 @@ class SerenaAgent:
 
         self._send_usage_info()
 
+    def restart_dashboard(self) -> str:
+        """Restart the dashboard web server without affecting LSP processes or tool execution.
+
+        The dashboard is stateless (reads live from the agent), so restarting it is safe.
+        The old daemon thread will die when the Flask server socket closes.
+        """
+        if not self.serena_config.web_dashboard:
+            return "Dashboard is not enabled in configuration"
+
+        # Store old port to try reusing it
+        old_url = self._dashboard_url
+        host = self.serena_config.web_dashboard_listen_address
+
+        # The old thread is a daemon, so it will die when the Flask server stops.
+        # We can't gracefully stop Flask, but since it's a daemon thread on a bound port,
+        # we just start a new one. The old server will fail to bind if the port is still
+        # in use, so we let run_in_thread find the next free port.
+        log.info("Restarting dashboard...")
+        tool_names = [tool.get_name() for tool in self.get_exposed_tool_instances()]
+        self._dashboard_thread, port = SerenaDashboardAPI(
+            get_memory_log_handler(), tool_names, agent=self, tool_usage_stats=self._tool_usage_stats
+        ).run_in_thread(host=host)
+
+        dashboard_host = host if host != "0.0.0.0" else "localhost"
+        self._dashboard_url = f"http://{dashboard_host}:{port}/dashboard/index.html"
+        log.info("Serena web dashboard restarted at %s", self._dashboard_url)
+
+        # Update GUI window if present
+        if self._gui_log_viewer is not None:
+            self._gui_log_viewer.set_dashboard_url(self._dashboard_url)
+
+        return f"Dashboard restarted at {self._dashboard_url}"
+
     def _send_usage_info(self) -> None:
         if os.getenv("CI") == "true" or os.getenv("GITHUB_ACTIONS") == "true" or os.getenv("SERENA_USAGE_REPORTING") == "false":
             return
