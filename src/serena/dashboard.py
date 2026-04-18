@@ -57,6 +57,7 @@ class ResponseToolStats(BaseModel):
 
 class ResponseConfigOverview(BaseModel):
     active_project: dict[str, str | None]
+    active_projects: list[dict[str, str | bool | None]]
     context: dict[str, str]
     modes: list[dict[str, str]]
     active_tools: list[str]
@@ -469,10 +470,31 @@ class SerenaDashboardAPI:
             self._tool_usage_stats.clear()
 
     def _get_config_overview(self) -> ResponseConfigOverview:
+        import time
+
         from serena.config.context_mode import SerenaAgentContext, SerenaAgentMode
         from serena.tools.tools_base import Tool
 
-        # Get active project info
+        # Get all active projects
+        all_active = self._agent.get_all_active_projects()
+        active_projects_info: list[dict[str, str | bool | None]] = []
+        for name, proj in all_active.items():
+            languages = ", ".join(lang.value for lang in proj.project_config.languages)
+            ls_manager = proj.language_server_manager
+            lsp_running = ls_manager.is_running() if ls_manager else False
+            last_active = self._agent._project_last_active.get(name)
+            idle_seconds = time.time() - last_active if last_active else None
+            active_projects_info.append(
+                {
+                    "name": name,
+                    "path": str(proj.project_root),
+                    "languages": languages,
+                    "lsp_running": lsp_running,
+                    "idle_seconds": idle_seconds,
+                }
+            )
+
+        # Get first active project info (backward compat)
         project = self._agent.get_active_project()
         active_project_name = project.project_name if project else None
         project_info = {
@@ -501,13 +523,14 @@ class SerenaDashboardAPI:
         active_tools = self._agent.get_active_tool_names()
 
         # Get registered projects
+        active_project_names = set(all_active.keys())
         registered_projects: list[dict[str, str | bool]] = []
         for proj in self._agent.serena_config.projects:
             registered_projects.append(
                 {
                     "name": proj.project_name,
                     "path": str(proj.project_root),
-                    "is_active": proj.project_name == active_project_name,
+                    "is_active": proj.project_name in active_project_names,
                 }
             )
 
@@ -580,6 +603,7 @@ class SerenaDashboardAPI:
 
         return ResponseConfigOverview(
             active_project=project_info,
+            active_projects=active_projects_info,
             context=context_info,
             modes=modes_info,
             active_tools=active_tools,

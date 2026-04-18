@@ -520,6 +520,9 @@ class Dashboard {
             this.loadNews();
             this.startConfigPolling();
             this.startExecutionsPolling();
+        } else if (page === 'active-projects') {
+            this.loadActiveProjects();
+            this.startActiveProjectsPolling();
         } else if (page === 'logs') {
             this.loadLogs();
         } else if (page === 'stats') {
@@ -539,6 +542,10 @@ class Dashboard {
         if (this.executionsPollInterval) {
             clearInterval(this.executionsPollInterval);
             this.executionsPollInterval = null;
+        }
+        if (this.activeProjectsPollInterval) {
+            clearInterval(this.activeProjectsPollInterval);
+            this.activeProjectsPollInterval = null;
         }
     }
 
@@ -566,26 +573,67 @@ class Dashboard {
                     self.configData = response;
                     self.jetbrainsMode = response.jetbrains_mode;
                     self.activeProjectName = response.active_project.name;
-                    self.displayConfig(response);
-                    self.displayBasicStats(response.tool_stats_summary);
-                    self.displayProjects(response.registered_projects);
-                    self.displayAvailableTools(response.available_tools);
-                    self.displayAvailableModes(response.available_modes);
-                    self.displayAvailableContexts(response.available_contexts);
+                    // Only update Overview sections when on the overview page
+                    if (self.currentPage === 'overview') {
+                        try {
+                            self.displayConfig(response);
+                        } catch (e) {
+                            console.error('Error in displayConfig:', e);
+                            self.$configDisplay.html('<div class="error-message">Error displaying configuration: ' + e.message + '</div>');
+                        }
+                        try {
+                            self.displayBasicStats(response.tool_stats_summary || {});
+                        } catch (e) {
+                            console.error('Error in displayBasicStats:', e);
+                            self.$basicStatsDisplay.html('<div class="error-message">Error displaying stats: ' + e.message + '</div>');
+                        }
+                        try {
+                            self.displayProjects(response.registered_projects);
+                        } catch (e) {
+                            console.error('Error in displayProjects:', e);
+                            self.$projectsDisplay.html('<div class="error-message">Error displaying projects: ' + e.message + '</div>');
+                        }
+                        try {
+                            self.displayAvailableTools(response.available_tools);
+                        } catch (e) {
+                            console.error('Error in displayAvailableTools:', e);
+                            self.$availableToolsDisplay.html('<div class="error-message">Error displaying tools: ' + e.message + '</div>');
+                        }
+                        try {
+                            self.displayAvailableModes(response.available_modes);
+                        } catch (e) {
+                            console.error('Error in displayAvailableModes:', e);
+                            self.$availableModesDisplay.html('<div class="error-message">Error displaying modes: ' + e.message + '</div>');
+                        }
+                        try {
+                            self.displayAvailableContexts(response.available_contexts);
+                        } catch (e) {
+                            console.error('Error in displayAvailableContexts:', e);
+                            self.$availableContextsDisplay.html('<div class="error-message">Error displaying contexts: ' + e.message + '</div>');
+                        }
+                    }
+                    // Update active projects display when on that page
+                    if (self.currentPage === 'active-projects') {
+                        self.displayActiveProjects(response.active_projects || []);
+                    }
                 } else {
                     console.log('Config unchanged, skipping display update');
                 }
             },
             error: function (xhr, status, error) {
                 console.error('Error loading config overview:', error);
-                self.$configDisplay.html('<div class="error-message">Error loading configuration</div>');
-                self.$basicStatsDisplay.html('<div class="error-message">Error loading stats</div>');
-                self.$projectsDisplay.html('<div class="error-message">Error loading projects</div>');
-                self.$availableToolsDisplay.html('<div class="error-message">Error loading tools</div>');
-                self.$availableModesDisplay.html('<div class="error-message">Error loading modes</div>');
-                self.$availableContextsDisplay.html('<div class="error-message">Error loading contexts</div>');
-            },
-            complete: function () {
+                if (self.currentPage === 'overview') {
+                    self.$configDisplay.html('<div class="error-message">Error loading configuration</div>');
+                    self.$basicStatsDisplay.html('<div class="error-message">Error loading stats</div>');
+                    self.$projectsDisplay.html('<div class="error-message">Error loading projects</div>');
+                    self.$availableToolsDisplay.html('<div class="error-message">Error loading tools</div>');
+                    self.$availableModesDisplay.html('<div class="error-message">Error displaying modes</div>');
+                    self.$availableContextsDisplay.html('<div class="error-message">Error loading contexts</div>');
+                }
+                if (self.currentPage === 'active-projects') {
+                    $('#active-projects-list').html('<div class="error-message">Error loading active projects</div>');
+                }
+            }, complete: function () {
                 self.waitingForConfigPollingResult = false;
             }
         });
@@ -833,6 +881,71 @@ class Dashboard {
         });
 
         this.$projectsDisplay.html(html);
+    }
+
+    // ===== Active Projects Methods =====
+
+    loadActiveProjects() {
+        let self = this;
+        $.ajax({
+            url: '/get_config_overview',
+            type: 'GET',
+            success: function (response) {
+                self.displayActiveProjects(response.active_projects || []);
+            },
+            error: function (xhr, status, error) {
+                console.error('Error loading active projects:', error);
+                $('#active-projects-list').html('<div class="error-message">Error loading active projects</div>');
+            }
+        });
+    }
+
+    startActiveProjectsPolling() {
+        this.loadActiveProjects();
+        this.activeProjectsPollInterval = setInterval(() => {
+            this.loadActiveProjects();
+        }, 2000);
+    }
+
+    displayActiveProjects(projects) {
+        const $container = $('#active-projects-list');
+        if (!projects || projects.length === 0) {
+            $container.html('<div class="no-stats-message">No active projects. Activate a project from your MCP client.</div>');
+            return;
+        }
+
+        let html = '<div class="active-projects-grid">';
+        const self = this;
+
+        projects.forEach(function (project) {
+            const lspStatus = project.lsp_running ? 'Running' : 'Stopped';
+            const lspClass = project.lsp_running ? 'status-running' : 'status-stopped';
+            const idleText = project.idle_seconds !== null && project.idle_seconds !== undefined
+                ? self.formatIdleTime(project.idle_seconds)
+                : 'Active now';
+
+            html += '<div class="active-project-card">';
+            html += '<div class="active-project-header">';
+            html += '<div class="active-project-name">' + self.escapeHtml(project.name || 'Unknown') + '</div>';
+            html += '<div class="active-project-status ' + lspClass + '">' + lspStatus + '</div>';
+            html += '</div>';
+            html += '<div class="active-project-path" title="' + self.escapeHtml(project.path || '') + '">' + self.escapeHtml(project.path || 'N/A') + '</div>';
+            html += '<div class="active-project-details">';
+            html += '<div class="detail-row"><span class="detail-label">Languages:</span> <span class="detail-value">' + self.escapeHtml(project.languages || 'N/A') + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Idle:</span> <span class="detail-value">' + idleText + '</span></div>';
+            html += '</div>';
+            html += '</div>';
+        });
+
+        html += '</div>';
+        $container.html(html);
+    }
+
+    formatIdleTime(seconds) {
+        if (seconds === null || seconds === undefined) return 'Unknown';
+        if (seconds < 60) return Math.floor(seconds) + 's ago';
+        if (seconds < 3600) return Math.floor(seconds / 60) + 'm ago';
+        return Math.floor(seconds / 3600) + 'h ' + Math.floor((seconds % 3600) / 60) + 'm ago';
     }
 
     displayAvailableTools(tools) {
