@@ -755,8 +755,9 @@ class ProjectCommands(AutoRegisteringGroup):
         default="WARNING",
         help="Log level for indexing.",
     )
+    @click.option("--resume", is_flag=True, help="Skip files that are already indexed (resume from cache).")
     @click.option("--timeout", type=float, default=10, help="Timeout for indexing a single file.")
-    def index(project: str, name: str | None, language: tuple[str, ...], log_level: str, timeout: float) -> None:
+    def index(project: str, name: str | None, language: tuple[str, ...], log_level: str, timeout: float, resume: bool) -> None:
         serena_config = SerenaConfig.from_config_file()
         registered_project = serena_config.get_registered_project(project, autoregister=True)
         if registered_project is None:
@@ -767,10 +768,10 @@ class ProjectCommands(AutoRegisteringGroup):
             except Exception as e:
                 raise click.ClickException(str(e))
 
-        ProjectCommands._index_project(registered_project, log_level, timeout=timeout)
+        ProjectCommands._index_project(registered_project, log_level, timeout=timeout, resume=resume)
 
     @staticmethod
-    def _index_project(registered_project: RegisteredProject, log_level: str, timeout: float) -> None:
+    def _index_project(registered_project: RegisteredProject, log_level: str, timeout: float, resume: bool = False) -> None:
         lvl = logging.getLevelNamesMapping()[log_level.upper()]
         logging.configure(level=lvl)
         serena_config = SerenaConfig.from_config_file()
@@ -784,11 +785,19 @@ class ProjectCommands(AutoRegisteringGroup):
 
             collected_exceptions: list[Exception] = []
             files_failed = []
+            files_skipped = 0
             language_file_counts: dict[Language, int] = collections.defaultdict(lambda: 0)
             last_save_time = time.monotonic()
             for i, f in enumerate(tqdm(files, desc="Indexing")):
                 try:
                     ls = ls_mgr.get_language_server(f)
+                    # In resume mode, check cache before querying the LSP
+                    if resume:
+                        cached = ls.get_cached_raw_document_symbols(f)
+                        if cached is not None:
+                            language_file_counts[ls.language] += 1
+                            files_skipped += 1
+                            continue
                     ls.request_document_symbols(f)
                     language_file_counts[ls.language] += 1
                 except Exception as e:
@@ -801,6 +810,8 @@ class ProjectCommands(AutoRegisteringGroup):
                     last_save_time = now
             reported_language_file_counts = {k.value: v for k, v in language_file_counts.items()}
             click.echo(f"Indexed files per language: {dict_string(reported_language_file_counts, brackets=None)}")
+            if resume and files_skipped > 0:
+                click.echo(f"Skipped {files_skipped} already-indexed files (cache hit)")
             ls_mgr.save_all_caches()
 
             if len(files_failed) > 0:
