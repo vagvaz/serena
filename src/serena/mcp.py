@@ -218,8 +218,16 @@ class SerenaMCPFactory:
                 param_desc = f"{param_doc.description.strip().strip('.') + '.'}"
                 properties["description"] = param_desc[0].upper() + param_desc[1:]
 
+        # Inject cwd parameter into the tool schema (it lives on apply_ex, not on apply)
+        cwd_property = {
+            "type": "string",
+            "description": "Current working directory for resolving the project context. If provided, the project whose root is a prefix of this path will be used.",
+        }
+        parameters.setdefault("properties", {})["cwd"] = cwd_property
+
         def execute_fn(**kwargs) -> str:  # type: ignore
-            return tool.apply_ex(log_call=True, catch_exceptions=True, **kwargs)
+            cwd = kwargs.pop("cwd", None)
+            return tool.apply_ex(log_call=True, catch_exceptions=True, cwd=cwd, **kwargs)
 
         # Generate human-readable title from snake_case tool name
         tool_title = " ".join(word.capitalize() for word in func_name.split("_"))

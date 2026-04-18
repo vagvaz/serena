@@ -47,7 +47,10 @@ from serena.prompt_factory import SerenaPromptFactory
 from serena.task_executor import TaskExecutor
 from serena.tools import (
     ActivateProjectTool,
+    DeactivateProjectTool,
     GetCurrentConfigTool,
+    GetProjectStatusTool,
+    ListActiveProjectsTool,
     OpenDashboardTool,
     ReadMemoryTool,
     ReplaceContentTool,
@@ -752,7 +755,13 @@ class SerenaAgent:
             tool_inclusion_definitions.append(
                 NamedToolInclusionDefinition(
                     name="SingleProjectExclusions",
-                    excluded_tools=[ActivateProjectTool.get_name_from_cls(), GetCurrentConfigTool.get_name_from_cls()],
+                    excluded_tools=[
+                        ActivateProjectTool.get_name_from_cls(),
+                        DeactivateProjectTool.get_name_from_cls(),
+                        ListActiveProjectsTool.get_name_from_cls(),
+                        GetProjectStatusTool.get_name_from_cls(),
+                        GetCurrentConfigTool.get_name_from_cls(),
+                    ],
                 )
             )
             tool_inclusion_definitions.append(project.project_config)

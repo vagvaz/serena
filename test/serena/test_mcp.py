@@ -44,6 +44,7 @@ class BasicTool(BaseMockTool):
         self,
         log_call: bool = True,
         catch_exceptions: bool = True,
+        cwd: str | None = None,
         **kwargs,
     ) -> str:
         """Mock implementation of apply_ex."""
@@ -100,7 +101,9 @@ def test_make_tool_no_params() -> None:
 
     assert mcp_tool.name == "no_params"
     assert "This is a test function with no parameters. Returns A simple result." in mcp_tool.description
-    assert mcp_tool.parameters["properties"] == {}
+    # cwd is always injected by make_tool
+    assert "cwd" in mcp_tool.parameters["properties"]
+    assert len(mcp_tool.parameters["properties"]) == 1
 
 
 def test_make_tool_no_return_description() -> None:
