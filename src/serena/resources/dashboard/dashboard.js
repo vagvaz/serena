@@ -54,10 +54,6 @@ function updateThemeAwareImage($img, theme=null) {
 
 /**
  * Manages banner loading, display, and navigation.
- *
- * When automaticRotationEnabled is true, banners rotate on a timer and arrow
- * buttons are hidden.  When false (the current default), a random initial
- * banner is shown and the user navigates manually via arrow buttons.
  */
 class BannerRotation {
     constructor() {
@@ -82,7 +78,6 @@ class BannerRotation {
             if (self.automaticRotationEnabled) {
                 self.startPlatinumRotation();
                 self.startGoldRotation();
-                // Hide arrows entirely when rotation is automatic
                 $('.banner-arrow').hide();
             } else {
                 self.hideArrowsIfSingle();
@@ -192,20 +187,16 @@ class BannerRotation {
 
         if (total === 0) return;
 
-        // Remove active class from current slide
         $slides.eq(this.platinumIndex).removeClass('active');
 
-        // Calculate next index
         if (direction === 'next') {
             this.platinumIndex = (this.platinumIndex + 1) % total;
         } else {
             this.platinumIndex = (this.platinumIndex - 1 + total) % total;
         }
 
-        // Add active class to new slide
         $slides.eq(this.platinumIndex).addClass('active');
 
-        // Reset timer when in automatic rotation mode
         if (this.automaticRotationEnabled) {
             clearInterval(this.platinumTimer);
             this.startPlatinumRotation();
@@ -218,20 +209,16 @@ class BannerRotation {
 
         if (total === 0) return;
 
-        // Remove active class from current group
         $groups.eq(this.goldIndex).removeClass('active');
 
-        // Calculate next index
         if (direction === 'next') {
             this.goldIndex = (this.goldIndex + 1) % total;
         } else {
             this.goldIndex = (this.goldIndex - 1 + total) % total;
         }
 
-        // Add active class to new group
         $groups.eq(this.goldIndex).addClass('active');
 
-        // Reset timer when in automatic rotation mode
         if (this.automaticRotationEnabled) {
             clearInterval(this.goldTimer);
             this.startGoldRotation();
@@ -246,7 +233,7 @@ class Dashboard {
         // Page state
         this.currentPage = 'overview';
         this.configData = null;
-        this.lastConfigDataJson = null; // Cache for comparison
+        this.lastConfigDataJson = null;
         this.jetbrainsMode = false;
         this.activeProjectName = null;
         this.languageToRemove = null;
@@ -270,9 +257,40 @@ class Dashboard {
         this.pollInterval = null;
         this.configPollInterval = null;
         this.executionsPollInterval = null;
+        this.activeProjectsPollInterval = null;
         this.heartbeatFailureCount = 0;
 
-        // jQuery elements
+        // Chart references
+        this.countChart = null;
+        this.tokensChart = null;
+        this.inputChart = null;
+        this.outputChart = null;
+
+        // Cache jQuery elements
+        this.cacheElements();
+
+        // Register event handlers
+        this.bindEvents();
+
+        // Initialize theme
+        this.initializeTheme();
+
+        // Initialize banner rotation
+        this.bannerRotation = new BannerRotation();
+
+        // Initialize the application
+        this.loadToolNames().then(function () {
+            self.loadNews();
+            self.loadConfigOverview();
+            self.startConfigPolling();
+            self.startExecutionsPolling();
+        });
+
+        // Initialize heartbeat
+        setInterval(this.heartbeat.bind(this), 250);
+    }
+
+    cacheElements() {
         this.$logContainer = $('#log-container');
         this.$errorContainer = $('#error-container');
         this.$saveLogsBtn = $('#save-logs-btn');
@@ -286,7 +304,6 @@ class Dashboard {
         this.$themeText = $('#theme-text');
         this.$configDisplay = $('#config-display');
         this.$basicStatsDisplay = $('#basic-stats-display');
-        this.$statsSection = $('#stats-section');
         this.$refreshStats = $('#refresh-stats');
         this.$clearStats = $('#clear-stats');
         this.$projectsDisplay = $('#projects-display');
@@ -299,12 +316,10 @@ class Dashboard {
         this.$modalProjectName = $('#modal-project-name');
         this.$modalAddBtn = $('#modal-add-btn');
         this.$modalCancelBtn = $('#modal-cancel-btn');
-        this.$modalClose = $('.modal-close');
         this.$removeLanguageModal = $('#remove-language-modal');
         this.$removeLanguageName = $('#remove-language-name');
         this.$removeModalOkBtn = $('#remove-modal-ok-btn');
         this.$removeModalCancelBtn = $('#remove-modal-cancel-btn');
-        this.$modalCloseRemove = $('.modal-close-remove');
         this.$editMemoryModal = $('#edit-memory-modal');
         this.$editMemoryName = $('#edit-memory-name');
         this.$editMemoryRenameBtn = $('#edit-memory-rename-btn');
@@ -312,40 +327,33 @@ class Dashboard {
         this.$editMemoryContent = $('#edit-memory-content');
         this.$editMemorySaveBtn = $('#edit-memory-save-btn');
         this.$editMemoryCancelBtn = $('#edit-memory-cancel-btn');
-        this.$modalCloseEditMemory = $('.modal-close-edit-memory');
         this.$deleteMemoryModal = $('#delete-memory-modal');
         this.$deleteMemoryName = $('#delete-memory-name');
         this.$deleteMemoryOkBtn = $('#delete-memory-ok-btn');
         this.$deleteMemoryCancelBtn = $('#delete-memory-cancel-btn');
-        this.$modalCloseDeleteMemory = $('.modal-close-delete-memory');
         this.$createMemoryModal = $('#create-memory-modal');
         this.$createMemoryProjectName = $('#create-memory-project-name');
         this.$createMemoryNameInput = $('#create-memory-name-input');
         this.$createMemoryCreateBtn = $('#create-memory-create-btn');
         this.$createMemoryCancelBtn = $('#create-memory-cancel-btn');
-        this.$modalCloseCreateMemory = $('.modal-close-create-memory');
         this.$activeExecutionQueueDisplay = $('#active-executions-display');
         this.$lastExecutionDisplay = $('#last-execution-display');
         this.$cancelledExecutionsDisplay = $('#cancelled-executions-display');
         this.$cancelExecutionModal = $('#cancel-execution-modal');
         this.$cancelExecutionOkBtn = $('#cancel-execution-ok-btn');
         this.$cancelExecutionCancelBtn = $('#cancel-execution-cancel-btn');
-        this.$modalCloseCancelExecution = $('.modal-close-cancel-execution');
         this.$editSerenaConfigModal = $('#edit-serena-config-modal');
         this.$editSerenaConfigContent = $('#edit-serena-config-content');
         this.$editSerenaConfigSaveBtn = $('#edit-serena-config-save-btn');
         this.$editSerenaConfigCancelBtn = $('#edit-serena-config-cancel-btn');
-        this.$modalCloseEditSerenaConfig = $('.modal-close-edit-serena-config');
         this.$newsSection = $('#news-section');
         this.$newsDisplay = $('#news-display');
+    }
 
-        // Chart references
-        this.countChart = null;
-        this.tokensChart = null;
-        this.inputChart = null;
-        this.outputChart = null;
+    bindEvents() {
+        let self = this;
 
-        // Register event handlers
+        // Button handlers
         this.$saveLogsBtn.click(this.saveLogs.bind(this));
         this.$copyLogsBtn.click(this.copyLogs.bind(this));
         this.$clearLogsBtn.click(this.clearLogs.bind(this));
@@ -357,22 +365,32 @@ class Dashboard {
         this.$themeToggle.click(this.toggleTheme.bind(this));
         this.$refreshStats.click(this.loadStats.bind(this));
         this.$clearStats.click(this.clearStats.bind(this));
+
+        // Modal handlers
         this.$modalAddBtn.click(this.addLanguageFromModal.bind(this));
         this.$modalCancelBtn.click(this.closeLanguageModal.bind(this));
-        this.$modalClose.click(this.closeLanguageModal.bind(this));
+        $('.modal-close').click(function() {
+            const $modal = $(this).closest('.modal');
+            if ($modal.is(self.$addLanguageModal)) self.closeLanguageModal();
+            if ($modal.is(self.$removeLanguageModal)) self.closeRemoveLanguageModal();
+            if ($modal.is(self.$editMemoryModal)) self.closeEditMemoryModal();
+            if ($modal.is(self.$deleteMemoryModal)) self.closeDeleteMemoryModal();
+            if ($modal.is(self.$createMemoryModal)) self.closeCreateMemoryModal();
+            if ($modal.is(self.$cancelExecutionModal)) self.closeCancelExecutionModal();
+            if ($modal.is(self.$editSerenaConfigModal)) self.closeEditSerenaConfigModal();
+        });
+
         this.$removeModalOkBtn.click(this.confirmRemoveLanguageOk.bind(this));
         this.$removeModalCancelBtn.click(this.closeRemoveLanguageModal.bind(this));
-        this.$modalCloseRemove.click(this.closeRemoveLanguageModal.bind(this));
         this.$editMemorySaveBtn.click(this.saveMemoryFromModal.bind(this));
         this.$editMemoryCancelBtn.click(this.closeEditMemoryModal.bind(this));
-        this.$modalCloseEditMemory.click(this.closeEditMemoryModal.bind(this));
         this.$editMemoryContent.on('input', this.trackMemoryChanges.bind(this));
         this.$editMemoryRenameBtn.click(this.startMemoryRename.bind(this));
         this.$editMemoryRenameInput.keydown(function (e) {
-            if (e.which === 13) { // Enter key
+            if (e.which === 13) {
                 e.preventDefault();
                 self.commitMemoryRename();
-            } else if (e.which === 27) { // Escape key
+            } else if (e.which === 27) {
                 e.preventDefault();
                 self.cancelMemoryRename();
             }
@@ -382,22 +400,18 @@ class Dashboard {
         });
         this.$deleteMemoryOkBtn.click(this.confirmDeleteMemoryOk.bind(this));
         this.$deleteMemoryCancelBtn.click(this.closeDeleteMemoryModal.bind(this));
-        this.$modalCloseDeleteMemory.click(this.closeDeleteMemoryModal.bind(this));
         this.$createMemoryCreateBtn.click(this.createMemoryFromModal.bind(this));
         this.$createMemoryCancelBtn.click(this.closeCreateMemoryModal.bind(this));
-        this.$modalCloseCreateMemory.click(this.closeCreateMemoryModal.bind(this));
         this.$createMemoryNameInput.keypress(function (e) {
-            if (e.which === 13) { // Enter key
+            if (e.which === 13) {
                 e.preventDefault();
                 self.createMemoryFromModal();
             }
         });
         this.$cancelExecutionOkBtn.click(this.confirmCancelExecutionOk.bind(this));
         this.$cancelExecutionCancelBtn.click(this.closeCancelExecutionModal.bind(this));
-        this.$modalCloseCancelExecution.click(this.closeCancelExecutionModal.bind(this));
         this.$editSerenaConfigSaveBtn.click(this.saveSerenaConfigFromModal.bind(this));
         this.$editSerenaConfigCancelBtn.click(this.closeEditSerenaConfigModal.bind(this));
-        this.$modalCloseEditSerenaConfig.click(this.closeEditSerenaConfigModal.bind(this));
 
         // Page navigation
         $('[data-page]').click(function (e) {
@@ -413,41 +427,9 @@ class Dashboard {
             }
         });
 
-        // Close modals when clicking outside
-        this.$addLanguageModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeLanguageModal();
-            }
-        });
-
-        this.$removeLanguageModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeRemoveLanguageModal();
-            }
-        });
-
-        this.$editMemoryModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeEditMemoryModal();
-            }
-        });
-
-        this.$deleteMemoryModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeDeleteMemoryModal();
-            }
-        });
-
-        this.$createMemoryModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeCreateMemoryModal();
-            }
-        });
-
-        this.$editSerenaConfigModal.click(function (e) {
-            if ($(e.target).hasClass('modal')) {
-                self.closeEditSerenaConfigModal();
-            }
+        // Close modals when clicking overlay
+        $('.modal-overlay').click(function() {
+            $(this).closest('.modal').find('.modal-close').trigger('click');
         });
 
         // Collapsible sections
@@ -456,38 +438,36 @@ class Dashboard {
             const $content = $header.next('.collapsible-content');
             const $icon = $header.find('.toggle-icon');
 
-            $content.slideToggle(300);
+            $content.slideToggle(200);
             $icon.toggleClass('expanded');
         });
 
-        // Initialize theme
-        this.initializeTheme();
-
-        // Initialize banner rotation
-        this.bannerRotation = new BannerRotation();
-
-        // Add ESC key handler for closing modals
+        // ESC key handler
         $(document).keydown(function (e) {
             if (e.key === 'Escape' || e.keyCode === 27) {
-                if (self.$addLanguageModal.is(':visible')) {
-                    self.closeLanguageModal();
-                } else if (self.$removeLanguageModal.is(':visible')) {
-                    self.closeRemoveLanguageModal();
-                } else if (self.$editMemoryModal.is(':visible')) {
-                    self.closeEditMemoryModal();
-                } else if (self.$deleteMemoryModal.is(':visible')) {
-                    self.closeDeleteMemoryModal();
-                } else if (self.$createMemoryModal.is(':visible')) {
-                    self.closeCreateMemoryModal();
-                }
+                $('.modal:visible').each(function() {
+                    $(this).find('.modal-close').trigger('click');
+                });
             }
         });
+    }
 
-        // Initialize the application
-        this.loadToolNames().then(function () {
-            self.loadNews();
-            // start on overview page
-            self.navigateToPage("overview");
+    heartbeat() {
+        let self = this;
+        $.ajax({
+            url: '/heartbeat',
+            type: 'GET',
+            success: function (response) {
+                self.heartbeatFailureCount = 0;
+            },
+            error: function (xhr, status, error) {
+                self.heartbeatFailureCount++;
+                console.error('Heartbeat failure; count = ', self.heartbeatFailureCount);
+                if (self.heartbeatFailureCount >= 1) {
+                    console.log('Server appears to be down, closing tab');
+                    window.close();
+                }
+            },
         });
     }
 
@@ -499,11 +479,13 @@ class Dashboard {
         // Hide menu
         this.$menuDropdown.hide();
 
-        // Hide all pages
-        $('.page-view').hide();
+        // Animate page transition
+        const $currentPage = $('.page-view:visible');
+        const $nextPage = $('#page-' + page);
 
-        // Show selected page
-        $('#page-' + page).show();
+        $currentPage.fadeOut(150, function() {
+            $nextPage.fadeIn(200);
+        });
 
         // Update menu active state
         $('[data-page]').removeClass('active');
@@ -563,7 +545,6 @@ class Dashboard {
             url: '/get_config_overview',
             type: 'GET',
             success: function (response) {
-                // Check if the config data has actually changed
                 const currentConfigJson = JSON.stringify(response);
                 const hasChanged = self.lastConfigDataJson !== currentConfigJson;
 
@@ -573,46 +554,15 @@ class Dashboard {
                     self.configData = response;
                     self.jetbrainsMode = response.jetbrains_mode;
                     self.activeProjectName = response.active_project.name;
-                    // Only update Overview sections when on the overview page
+                    
                     if (self.currentPage === 'overview') {
-                        try {
-                            self.displayConfig(response);
-                        } catch (e) {
-                            console.error('Error in displayConfig:', e);
-                            self.$configDisplay.html('<div class="error-message">Error displaying configuration: ' + e.message + '</div>');
-                        }
-                        try {
-                            self.displayBasicStats(response.tool_stats_summary || {});
-                        } catch (e) {
-                            console.error('Error in displayBasicStats:', e);
-                            self.$basicStatsDisplay.html('<div class="error-message">Error displaying stats: ' + e.message + '</div>');
-                        }
-                        try {
-                            self.displayProjects(response.registered_projects);
-                        } catch (e) {
-                            console.error('Error in displayProjects:', e);
-                            self.$projectsDisplay.html('<div class="error-message">Error displaying projects: ' + e.message + '</div>');
-                        }
-                        try {
-                            self.displayAvailableTools(response.available_tools);
-                        } catch (e) {
-                            console.error('Error in displayAvailableTools:', e);
-                            self.$availableToolsDisplay.html('<div class="error-message">Error displaying tools: ' + e.message + '</div>');
-                        }
-                        try {
-                            self.displayAvailableModes(response.available_modes);
-                        } catch (e) {
-                            console.error('Error in displayAvailableModes:', e);
-                            self.$availableModesDisplay.html('<div class="error-message">Error displaying modes: ' + e.message + '</div>');
-                        }
-                        try {
-                            self.displayAvailableContexts(response.available_contexts);
-                        } catch (e) {
-                            console.error('Error in displayAvailableContexts:', e);
-                            self.$availableContextsDisplay.html('<div class="error-message">Error displaying contexts: ' + e.message + '</div>');
-                        }
+                        self.displayConfig(response);
+                        self.displayBasicStats(response.tool_stats_summary || {});
+                        self.displayProjects(response.registered_projects);
+                        self.displayAvailableTools(response.available_tools);
+                        self.displayAvailableModes(response.available_modes);
+                        self.displayAvailableContexts(response.available_contexts);
                     }
-                    // Update active projects display when on that page
                     if (self.currentPage === 'active-projects') {
                         self.displayActiveProjects(response.active_projects || []);
                     }
@@ -623,20 +573,22 @@ class Dashboard {
             error: function (xhr, status, error) {
                 console.error('Error loading config overview:', error);
                 if (self.currentPage === 'overview') {
-                    self.$configDisplay.html('<div class="error-message">Error loading configuration</div>');
-                    self.$basicStatsDisplay.html('<div class="error-message">Error loading stats</div>');
-                    self.$projectsDisplay.html('<div class="error-message">Error loading projects</div>');
-                    self.$availableToolsDisplay.html('<div class="error-message">Error loading tools</div>');
-                    self.$availableModesDisplay.html('<div class="error-message">Error displaying modes</div>');
-                    self.$availableContextsDisplay.html('<div class="error-message">Error loading contexts</div>');
+                    self.showError(self.$configDisplay, 'Error loading configuration');
+                    self.showError(self.$basicStatsDisplay, 'Error loading stats');
+                    self.showError(self.$projectsDisplay, 'Error loading projects');
                 }
                 if (self.currentPage === 'active-projects') {
-                    $('#active-projects-list').html('<div class="error-message">Error loading active projects</div>');
+                    self.showError($('#active-projects-list'), 'Error loading active projects');
                 }
-            }, complete: function () {
+            },
+            complete: function () {
                 self.waitingForConfigPollingResult = false;
             }
         });
+    }
+
+    showError($element, message) {
+        $element.html('<div class="error-message">' + message + '</div>');
     }
 
     startConfigPolling() {
@@ -645,15 +597,15 @@ class Dashboard {
     }
 
     startExecutionsPolling() {
-        this.loadExecutions()
-        // Poll every 1 second for executions (independent of config polling)
-        // This ensures stuck executions can still be cancelled even if config polling is blocked
-        this.executionsPollInterval = setInterval(this.loadExecutions.bind(this), 1000);
+        this.loadExecutions();
+        this.executionsPollInterval = setInterval(() => {
+            this.loadQueuedExecutions();
+            this.loadLastExecution();
+        }, 1000);
     }
 
     displayConfig(config) {
         try {
-            // Check if tools and memories sections are currently expanded
             const $existingToolsContent = $('#tools-content');
             const $existingMemoriesContent = $('#memories-content');
             const wasToolsExpanded = $existingToolsContent.is(':visible');
@@ -661,18 +613,20 @@ class Dashboard {
 
             let html = '<div class="config-grid">';
 
-            html += '<div class="config-label">Version:</div><div class="config-value">' + config.serena_version + '</div>';
+            // Version badge
+            $('#version-badge').text('v' + config.serena_version);
 
             // Project info
-            html += '<div class="config-label">Active Project:</div>';
+            html += '<div class="config-label">Active Project</div>';
             if (config.active_project.name && config.active_project.path) {
                 const configPath = config.active_project.path + '/.serena/project.yml';
-                html += '<div class="config-value"><span title="Project configuration in ' + configPath + '">' + config.active_project.name + '</span></div>';
+                html += '<div class="config-value" title="Project configuration in ' + configPath + '">' + config.active_project.name + '</div>';
             } else {
                 html += '<div class="config-value">' + (config.active_project.name || 'None') + '</div>';
             }
 
-            html += '<div class="config-label">Languages:</div>';
+            // Languages
+            html += '<div class="config-label">Languages</div>';
             if (this.jetbrainsMode) {
                 html += '<div class="config-value">Using JetBrains backend</div>';
             } else {
@@ -688,17 +642,13 @@ class Dashboard {
                         }
                         html += '</div>';
                     });
-                    // Add the "Add Language" button inline with language badges (only if active project exists)
                     if (config.active_project && config.active_project.name) {
-                        // TODO: address after refactoring, it's not awesome to keep depending on state
                         if (this.isAddingLanguage) {
-                            html += '<div id="add-language-spinner" class="language-spinner">';
+                            html += '<div id="add-language-spinner" class="language-spinner"><div class="spinner"></div></div>';
                         } else {
-                            html += '<button id="add-language-btn" class="btn language-add-btn">+ Add Language</button>';
-                            html += '<div id="add-language-spinner" class="language-spinner" style="display:none;">';
+                            html += '<button id="add-language-btn" class="language-add-btn">+ Add</button>';
+                            html += '<div id="add-language-spinner" class="language-spinner" style="display:none;"><div class="spinner"></div></div>';
                         }
-                        html += '<div class="spinner"></div>';
-                        html += '</div>';
                     }
                     html += '</div>';
                 } else {
@@ -708,11 +658,11 @@ class Dashboard {
             }
 
             // Context info
-            html += '<div class="config-label">Context:</div>';
-            html += '<div class="config-value"><span title="' + config.context.path + '">' + config.context.name + '</span></div>';
+            html += '<div class="config-label">Context</div>';
+            html += '<div class="config-value" title="' + config.context.path + '">' + config.context.name + '</div>';
 
             // Modes info
-            html += '<div class="config-label">Active Modes:</div>';
+            html += '<div class="config-label">Active Modes</div>';
             html += '<div class="config-value">';
             if (config.modes.length > 0) {
                 const modeSpans = config.modes.map(function (mode) {
@@ -725,33 +675,37 @@ class Dashboard {
             html += '</div>';
 
             // File Encoding info
-            html += '<div class="config-label">File Encoding:</div>';
+            html += '<div class="config-label">File Encoding</div>';
             html += '<div class="config-value">' + (config.encoding || 'N/A') + '</div>';
 
             html += '</div>';
 
             // Active tools - collapsible
             html += '<div style="margin-top: 20px;">';
-            html += '<h3 class="collapsible-header" id="tools-header" style="font-size: 16px; margin: 0;">';
-            html += '<span>Active Tools (' + config.active_tools.length + ')</span>';
-            html += '<span class="toggle-icon' + (wasToolsExpanded ? ' expanded' : '') + '">▼</span>';
+            html += '<h3 class="collapsible-header" id="tools-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
+            html += '<span style="font-weight: 600; color: var(--text-secondary);">Active Tools (' + config.active_tools.length + ')</span>';
+            html += '<span class="toggle-icon' + (wasToolsExpanded ? ' expanded' : '') + '">';
+            html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+            html += '</span>';
             html += '</h3>';
-            html += '<div class="collapsible-content tools-grid" id="tools-content" style="' + (wasToolsExpanded ? '' : 'display:none;') + ' margin-top: 10px;">';
+            html += '<div class="collapsible-content tools-grid" id="tools-content" style="' + (wasToolsExpanded ? '' : 'display:none;') + ' margin-top: 10px; padding-bottom: 10px;">';
             config.active_tools.forEach(function (tool) {
                 html += '<div class="tool-item" title="' + tool + '">' + tool + '</div>';
             });
             html += '</div>';
             html += '</div>';
 
-            // Available memories - collapsible (show if memories exist or if project exists)
+            // Available memories - collapsible
             if (config.active_project && config.active_project.name) {
-                html += '<div style="margin-top: 20px;">';
-                html += '<h3 class="collapsible-header" id="memories-header" style="font-size: 16px; margin: 0;">';
+                html += '<div style="margin-top: 10px;">';
+                html += '<h3 class="collapsible-header" id="memories-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
                 const memoryCount = (config.available_memories && config.available_memories.length) || 0;
-                html += '<span>Available Memories (' + memoryCount + ')</span>';
-                html += '<span class="toggle-icon' + (wasMemoriesExpanded ? ' expanded' : '') + '">▼</span>';
+                html += '<span style="font-weight: 600; color: var(--text-secondary);">Available Memories (' + memoryCount + ')</span>';
+                html += '<span class="toggle-icon' + (wasMemoriesExpanded ? ' expanded' : '') + '">';
+                html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+                html += '</span>';
                 html += '</h3>';
-                html += '<div class="collapsible-content memories-container" id="memories-content" style="' + (wasMemoriesExpanded ? '' : 'display:none;') + ' margin-top: 10px;">';
+                html += '<div class="collapsible-content memories-container" id="memories-content" style="' + (wasMemoriesExpanded ? '' : 'display:none;') + ' margin-top: 10px; padding-bottom: 10px;">';
                 if (config.available_memories && config.available_memories.length > 0) {
                     config.available_memories.forEach(function (memory) {
                         html += '<div class="memory-item removable" data-memory="' + memory + '">';
@@ -760,31 +714,27 @@ class Dashboard {
                         html += '</div>';
                     });
                 }
-                // Add Create Memory button
                 html += '<button id="create-memory-btn" class="memory-add-btn">+ Add Memory</button>';
                 html += '</div>';
                 html += '</div>';
             }
 
             // Configuration help link and edit config button
-            html += '<div style="margin-top: 15px; display: flex; gap: 10px; align-items: center;">';
-            html += '<div style="flex: 1; padding: 10px; background: var(--bg-secondary); border-radius: 4px; font-size: 13px; border: 1px solid var(--border-color);">';
-            html += '<span style="color: var(--text-muted);">📖</span> ';
-            html += '<a href="https://oraios.github.io/serena/02-usage/050_configuration.html" target="_blank" rel="noopener noreferrer" style="color: var(--btn-primary); text-decoration: none; font-weight: 500;">View Configuration Guide</a>';
+            html += '<div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color); display: flex; gap: 10px; align-items: center;">';
+            html += '<div style="flex: 1; padding: 12px; background: var(--bg-primary); border-radius: 8px; font-size: 13px; border: 1px solid var(--border-color);">';
+            html += '<span style="color: var(--text-muted); margin-right: 6px;">📖</span>';
+            html += '<a href="https://oraios.github.io/serena/02-usage/050_configuration.html" target="_blank" rel="noopener noreferrer">View Configuration Guide</a>';
             html += '</div>';
-            html += '<button id="edit-serena-config-btn" class="btn language-add-btn" style="white-space: nowrap; padding: 10px; ">Edit Global Serena Config</button>';
+            html += '<button id="edit-serena-config-btn" class="btn btn-secondary" style="white-space: nowrap;">Edit Global Config</button>';
             html += '</div>';
 
             this.$configDisplay.html(html);
 
-            // Attach event handlers for the dynamically created add language button
-            $('#add-language-btn').click(this.openLanguageModal.bind(this));
-
-            // Attach event handler for edit serena config button
-            $('#edit-serena-config-btn').click(this.openEditSerenaConfigModal.bind(this));
-
-            // Attach event handlers for language remove buttons
+            // Attach event handlers
             const self = this;
+            $('#add-language-btn').click(this.openLanguageModal.bind(this));
+            $('#edit-serena-config-btn').click(this.openEditSerenaConfigModal.bind(this));
+            
             $('.language-remove').click(function (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -792,14 +742,12 @@ class Dashboard {
                 self.confirmRemoveLanguage(language);
             });
 
-            // Attach event handlers for memory items
             $('.memory-item').click(function (e) {
                 e.preventDefault();
                 const memoryName = $(this).data('memory');
                 self.openEditMemoryModal(memoryName);
             });
 
-            // Attach event handlers for memory remove buttons
             $('.memory-remove').click(function (e) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -807,41 +755,35 @@ class Dashboard {
                 self.confirmDeleteMemory(memoryName);
             });
 
-            // Attach event handler for create memory button
             $('#create-memory-btn').click(this.openCreateMemoryModal.bind(this));
 
-            // Re-attach collapsible handler for the newly created tools header
             $('#tools-header').click(function () {
                 const $header = $(this);
                 const $content = $('#tools-content');
                 const $icon = $header.find('.toggle-icon');
-
-                $content.slideToggle(300);
+                $content.slideToggle(200);
                 $icon.toggleClass('expanded');
             });
 
-            // Re-attach collapsible handler for the newly created memories header
             $('#memories-header').click(function () {
                 const $header = $(this);
                 const $content = $('#memories-content');
                 const $icon = $header.find('.toggle-icon');
-
-                $content.slideToggle(300);
+                $content.slideToggle(200);
                 $icon.toggleClass('expanded');
             });
         } catch (error) {
             console.error('Error in displayConfig:', error);
-            this.$configDisplay.html('<div class="error-message">Error displaying configuration: ' + error.message + '</div>');
+            this.showError(this.$configDisplay, 'Error displaying configuration: ' + error.message);
         }
     }
 
     displayBasicStats(stats) {
         if (Object.keys(stats).length === 0) {
-            this.$basicStatsDisplay.html('<div class="no-stats-message">No tool usage stats collected yet.</div>');
+            this.$basicStatsDisplay.html('<div class="empty-state"><span class="empty-icon">📊</span><span class="empty-text">No tool usage stats collected yet</span></div>');
             return;
         }
 
-        // Sort tools by call count (descending)
         const sortedTools = Object.keys(stats).sort((a, b) => {
             return stats[b].num_calls - stats[a].num_calls;
         });
@@ -867,7 +809,7 @@ class Dashboard {
 
     displayProjects(projects) {
         if (!projects || projects.length === 0) {
-            this.$projectsDisplay.html('<div class="no-stats-message">No projects registered.</div>');
+            this.$projectsDisplay.html('<div class="empty-state small"><span class="empty-text">No projects registered</span></div>');
             return;
         }
 
@@ -910,34 +852,34 @@ class Dashboard {
     displayActiveProjects(projects) {
         const $container = $('#active-projects-list');
         if (!projects || projects.length === 0) {
-            $container.html('<div class="no-stats-message">No active projects. Activate a project from your MCP client.</div>');
+            $container.html('<div class="empty-state-box"><span class="empty-icon large">📂</span><h3>No Active Projects</h3><p>Activate a project from your MCP client to see it here.</p></div>');
             return;
         }
 
-        let html = '<div class="active-projects-grid">';
+        let html = '';
         const self = this;
 
         projects.forEach(function (project) {
             const lspStatus = project.lsp_running ? 'Running' : 'Stopped';
             const lspClass = project.lsp_running ? 'status-running' : 'status-stopped';
+            const cardClass = project.lsp_running ? '' : ' status-stopped';
             const idleText = project.idle_seconds !== null && project.idle_seconds !== undefined
                 ? self.formatIdleTime(project.idle_seconds)
                 : 'Active now';
 
-            html += '<div class="active-project-card">';
+            html += '<div class="active-project-card' + cardClass + '">';
             html += '<div class="active-project-header">';
-            html += '<div class="active-project-name">' + self.escapeHtml(project.name || 'Unknown') + '</div>';
+            html += '<div class="active-project-name" title="' + self.escapeHtml(project.name || 'Unknown') + '">' + self.escapeHtml(project.name || 'Unknown') + '</div>';
             html += '<div class="active-project-status ' + lspClass + '">' + lspStatus + '</div>';
             html += '</div>';
             html += '<div class="active-project-path" title="' + self.escapeHtml(project.path || '') + '">' + self.escapeHtml(project.path || 'N/A') + '</div>';
             html += '<div class="active-project-details">';
-            html += '<div class="detail-row"><span class="detail-label">Languages:</span> <span class="detail-value">' + self.escapeHtml(project.languages || 'N/A') + '</span></div>';
-            html += '<div class="detail-row"><span class="detail-label">Idle:</span> <span class="detail-value">' + idleText + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Languages</span><span class="detail-value">' + self.escapeHtml(project.languages || 'N/A') + '</span></div>';
+            html += '<div class="detail-row"><span class="detail-label">Last Active</span><span class="detail-value">' + idleText + '</span></div>';
             html += '</div>';
             html += '</div>';
         });
 
-        html += '</div>';
         $container.html(html);
     }
 
@@ -950,7 +892,7 @@ class Dashboard {
 
     displayAvailableTools(tools) {
         if (!tools || tools.length === 0) {
-            this.$availableToolsDisplay.html('<div class="no-stats-message">All tools are active.</div>');
+            this.$availableToolsDisplay.html('<div class="empty-state small"><span class="empty-text">All tools are active</span></div>');
             return;
         }
 
@@ -964,7 +906,7 @@ class Dashboard {
 
     displayAvailableModes(modes) {
         if (!modes || modes.length === 0) {
-            this.$availableModesDisplay.html('<div class="no-stats-message">No modes available.</div>');
+            this.$availableModesDisplay.html('<div class="empty-state small"><span class="empty-text">No modes available</span></div>');
             return;
         }
 
@@ -979,7 +921,7 @@ class Dashboard {
 
     displayAvailableContexts(contexts) {
         if (!contexts || contexts.length === 0) {
-            this.$availableContextsDisplay.html('<div class="no-stats-message">No contexts available.</div>');
+            this.$availableContextsDisplay.html('<div class="empty-state small"><span class="empty-text">No contexts available</span></div>');
             return;
         }
 
@@ -997,7 +939,8 @@ class Dashboard {
     loadQueuedExecutions(onComplete) {
         let self = this;
         $.ajax({
-            url: '/queued_task_executions', type: 'GET',
+            url: '/queued_task_executions',
+            type: 'GET',
             success: function (response) {
                 if (response.status === 'success') {
                     self.displayActiveExecutionsQueue(response.queued_executions || []);
@@ -1016,7 +959,8 @@ class Dashboard {
     loadLastExecution(onComplete) {
         let self = this;
         $.ajax({
-            url: '/last_execution', type: 'GET',
+            url: '/last_execution',
+            type: 'GET',
             success: function (response) {
                 if (response.status === 'success') {
                     if (response.last_execution !== null && response.last_execution.logged) {
@@ -1042,16 +986,15 @@ class Dashboard {
         else {
             this.waitingForExecutionsPollingResult = true;
             console.log('Polling for executions...');
-            this.loadQueuedExecutions(function() {
-                self.loadLastExecution(function() {
-                    self.waitingForExecutionsPollingResult = false;
-                });
-            });
+            this.loadQueuedExecutions();
+            this.loadLastExecution();
+            this.waitingForExecutionsPollingResult = false;
         }
     }
 
     displayActiveExecutionsQueue(executions) {
         if (!executions || executions.length === 0) {
+            this.$activeExecutionQueueDisplay.html('<div class="empty-state"><span class="empty-icon">✓</span><span class="empty-text">No pending tasks</span></div>');
             return;
         }
 
@@ -1062,25 +1005,24 @@ class Dashboard {
             const isRunning = execution.is_running;
             const logged = execution.logged;
 
-            if (!logged) {
-                return; // Skip unlogged executions
-            }
+            if (!logged) return;
 
             let itemClass = 'execution-item';
             if (isRunning) {
                 itemClass += ' running';
             }
 
-            // Escape JSON for HTML attribute - replace single quotes and use HTML entities
             const executionJson = JSON.stringify(execution).replace(/'/g, '&#39;');
 
             html += '<div class="' + itemClass + '" data-task-id="' + execution.task_id + '" data-execution=\'' + executionJson + '\'>';
 
             if (isRunning) {
                 html += '<div class="execution-spinner"></div>';
+            } else {
+                html += '<div style="width: 14px; height: 14px; border-radius: 50%; background: var(--border-color); flex-shrink: 0;"></div>';
             }
 
-            html += '<div class="execution-name">' + self.escapeHtml(execution.name) + '</div>';
+            html += '<div class="execution-name" title="' + self.escapeHtml(execution.name) + '">' + self.escapeHtml(execution.name) + '</div>';
 
             if (isRunning) {
                 html += '<div class="execution-meta">#' + execution.task_id + '</div>';
@@ -1088,39 +1030,30 @@ class Dashboard {
                 html += '<div class="execution-meta">queued · #' + execution.task_id + '</div>';
             }
 
-            html += '<button class="execution-cancel-btn" data-task-id="' + execution.task_id + '" data-is-running="' + isRunning + '">✕</button>';
+            html += '<button class="execution-cancel-btn" data-task-id="' + execution.task_id + '" title="Cancel">&times;</button>';
             html += '</div>';
         });
 
         html += '</div>';
         this.$activeExecutionQueueDisplay.html(html);
 
-        // Attach event handlers for cancel buttons
         $('.execution-cancel-btn').click(function (e) {
             e.preventDefault();
-            console.log('Cancel button clicked');
             const $item = $(this).closest('.execution-item');
-            console.log('Found item:', $item.length);
             const executionDataStr = $item.attr('data-execution');
-            console.log('Execution data string:', executionDataStr);
             if (executionDataStr) {
-                // Unescape HTML entities
                 const unescapedStr = executionDataStr.replace(/&#39;/g, "'");
                 const executionData = JSON.parse(unescapedStr);
-                console.log('Parsed execution data:', executionData);
                 self.confirmCancelExecution(executionData);
-            } else {
-                console.error('No execution data found on element');
             }
         });
 
-        // Update cancelled executions display
         this.displayCancelledExecutions(executions);
     }
 
     displayLastExecution(execution) {
         if (!execution) {
-            this.$lastExecutionDisplay.html('<div class="no-stats-message">No executions yet.</div>');
+            this.$lastExecutionDisplay.html('<div class="empty-state"><span class="empty-icon">-</span><span class="empty-text">No recent executions</span></div>');
             return;
         }
 
@@ -1128,12 +1061,12 @@ class Dashboard {
         let html = '<div class="last-execution-container' + (isSuccess ? '' : ' error') + '">';
 
         html += '<div class="last-execution-icon-container">';
-        html += isSuccess ? '✓' : '✕';
+        html += isSuccess ? '&#10003;' : '&#10007;';
         html += '</div>';
 
         html += '<div class="last-execution-body">';
         html += '<div class="last-execution-status">' + (isSuccess ? 'Succeeded' : 'Failed') + '</div>';
-        html += '<div class="last-execution-name">' + this.escapeHtml(execution.name) + '</div>';
+        html += '<div class="last-execution-name" title="' + this.escapeHtml(execution.name) + '">' + this.escapeHtml(execution.name) + '</div>';
         html += '</div>';
 
         html += '<div class="execution-meta">#' + execution.task_id + '</div>';
@@ -1144,15 +1077,13 @@ class Dashboard {
 
     displayCancelledExecutions() {
         let self = this;
-        const cancelledExecs = self.cancelledExecutions
+        const cancelledExecs = self.cancelledExecutions;
 
         if (cancelledExecs.length === 0) {
-            // Hide the cancelled executions section
             $('.executions-section').eq(2).hide();
             return;
         }
 
-        // Show the cancelled executions section
         $('.executions-section').eq(2).show();
 
         let html = '<div class="execution-list">';
@@ -1162,7 +1093,7 @@ class Dashboard {
 
             html += '<div class="execution-item ' + (isAbandoned ? 'abandoned' : 'cancelled') + '">';
             html += '<div class="execution-icon ' + (isAbandoned ? 'abandoned' : 'cancelled') + '">';
-            html += isAbandoned ? '!' : '✕';
+            html += isAbandoned ? '!' : '&#10007;';
             html += '</div>';
             html += '<div class="execution-name">' + self.escapeHtml(execution.name) + '</div>';
             html += '<div class="execution-meta">' + (isAbandoned ? 'abandoned · ' : '') + '#' + execution.task_id + '</div>';
@@ -1178,11 +1109,9 @@ class Dashboard {
         this.executionToCancel = executionData;
 
         if (executionData.is_running) {
-            // Show modal for running executions
             console.log('Showing modal for running execution');
             this.$cancelExecutionModal.fadeIn(200);
         } else {
-            // Directly cancel queued executions
             console.log('Directly cancelling queued execution');
             this.cancelExecution(executionData);
         }
@@ -1198,14 +1127,14 @@ class Dashboard {
     cancelExecution(executionData) {
         const self = this;
 
-        console.log('cancelExecution called with full execution data:', executionData);
-        console.log('Attempting to cancel task:', executionData.task_id);
+        console.log('cancelExecution called with:', executionData);
 
-        // Call backend API to cancel the task
         $.ajax({
-            url: '/cancel_task_execution', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                task_id: executionData.task_id
-            }), success: function (response) {
+            url: '/cancel_task_execution',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ task_id: executionData.task_id }),
+            success: function (response) {
                 console.log('Cancel task response:', response);
 
                 if (response.status === 'error') {
@@ -1216,41 +1145,24 @@ class Dashboard {
 
                 if (response.status === 'success') {
                     if (response.was_cancelled) {
-                        console.log('Task ' + executionData.task_id + ' was successfully cancelled');
-                        // Add to cancelled list (only managed in JS, not persisted)
                         const alreadyCancelled = self.cancelledExecutions.some(function (exec) {
                             return exec.task_id === executionData.task_id;
                         });
                         if (!alreadyCancelled) {
-                            console.log('Adding execution to cancelled list:', executionData);
                             self.cancelledExecutions.push(executionData);
-                            console.log('Cancelled executions array now contains:', self.cancelledExecutions);
-                        } else {
-                            console.log('Execution already in cancelled list');
                         }
-                    } else {
-                        console.log('Task ' + executionData.task_id + ' could not be cancelled (may have already completed). ' + response.message);
                     }
-                    // Refresh display regardless
                     self.loadQueuedExecutions();
                 } else {
-                    console.error('Unexpected response status:', response.status);
                     alert('Unexpected response from server');
                 }
-            }, error: function (xhr, status, error) {
-                console.error('AJAX error cancelling task:');
-                console.error('  Status:', status);
-                console.error('  Error:', error);
-                console.error('  XHR:', xhr);
-                console.error('  Response:', xhr.responseText);
-
+            },
+            error: function (xhr, status, error) {
+                console.error('AJAX error cancelling task:', error);
                 let errorMessage = error;
                 if (xhr.responseJSON && xhr.responseJSON.message) {
                     errorMessage = xhr.responseJSON.message;
-                } else if (xhr.responseText) {
-                    errorMessage = xhr.responseText;
                 }
-
                 alert('Error cancelling task: ' + errorMessage);
             }
         });
@@ -1280,10 +1192,13 @@ class Dashboard {
     loadToolNames() {
         let self = this;
         return $.ajax({
-            url: '/get_tool_names', type: 'GET', success: function (response) {
+            url: '/get_tool_names',
+            type: 'GET',
+            success: function (response) {
                 self.toolNames = response.tool_names || [];
                 console.log('Loaded tool names:', self.toolNames);
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error loading tool names:', error);
             }
         });
@@ -1313,21 +1228,17 @@ class Dashboard {
         URL.revokeObjectURL(url);
 
         const originalHtml = this.$saveLogsBtn.html();
-        const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="log-action-btn-text">save logs</span>';
+        const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Saved!</span>';
         this.$saveLogsBtn.html(checkmarkSvg);
         setTimeout(() => { this.$saveLogsBtn.html(originalHtml); }, 1500);
     }
 
     copyLogs() {
         const logText = this.$logContainer.text();
-
-        // Use the Clipboard API to copy text
         navigator.clipboard.writeText(logText).then(() => {
-            // Visual feedback - temporarily change icon to grey checkmark
             const originalHtml = this.$copyLogsBtn.html();
-            const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="log-action-btn-text">copy logs</span>';
+            const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Copied!</span>';
             this.$copyLogsBtn.html(checkmarkSvg);
-
             setTimeout(() => {
                 this.$copyLogsBtn.html(originalHtml);
             }, 1500);
@@ -1347,7 +1258,7 @@ class Dashboard {
                 self.updateLogButtons(false);
 
                 const originalHtml = self.$clearLogsBtn.html();
-                const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#888" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span class="log-action-btn-text">clear logs</span>';
+                const checkmarkSvg = '<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"></polyline></svg><span>Cleared!</span>';
                 self.$clearLogsBtn.html(checkmarkSvg);
                 setTimeout(() => { self.$clearLogsBtn.html(originalHtml); }, 1500);
             },
@@ -1363,36 +1274,31 @@ class Dashboard {
 
         self.$errorContainer.empty();
 
-        // Make API call
         $.ajax({
-            url: '/get_log_messages', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                start_idx: 0
-            }), success: function (response) {
-                // Clear existing logs
+            url: '/get_log_messages',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ start_idx: 0 }),
+            success: function (response) {
                 self.$logContainer.empty();
-
-                // Update max_idx
                 self.currentMaxIdx = response.max_idx || -1;
 
-                // Display each log message
                 if (response.messages && response.messages.length > 0) {
                     response.messages.forEach(function (message) {
                         self.displayLogMessage(message);
                     });
 
-                    // Auto-scroll to bottom
                     const logContainer = $('#log-container')[0];
                     logContainer.scrollTop = logContainer.scrollHeight;
                 } else {
-                    $('#log-container').html('<div class="loading">No log messages found.</div>');
+                    $('#log-container').html('<div class="empty-state"><span class="empty-icon">📝</span><span class="empty-text">No log messages found</span></div>');
                 }
 
                 self.updateLogButtons(response.messages && response.messages.length > 0);
                 self.updateTitle(response.active_project);
-
-                // Start periodic polling for new logs
                 self.startPeriodicPolling();
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error loading logs:', error);
                 self.$errorContainer.html('<div class="error-message">Error loading logs: ' + (xhr.responseJSON ? xhr.responseJSON.detail : error) + '</div>');
             }
@@ -1406,52 +1312,39 @@ class Dashboard {
             url: '/get_log_messages',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({
-                start_idx: self.currentMaxIdx + 1
-            }),
+            data: JSON.stringify({ start_idx: self.currentMaxIdx + 1 }),
             success: function (response) {
-                // Only append new messages if we have any
                 if (response.messages && response.messages.length > 0) {
                     let wasAtBottom = false;
                     const logContainer = $('#log-container')[0];
 
-                    // Check if user was at the bottom before adding new logs
                     if (logContainer.scrollHeight > 0) {
                         wasAtBottom = (logContainer.scrollTop + logContainer.clientHeight) >= (logContainer.scrollHeight - 10);
                     }
 
-                    // Append new messages
                     response.messages.forEach(function (message) {
                         self.displayLogMessage(message);
                     });
 
-                    // Update max_idx
                     self.currentMaxIdx = response.max_idx || self.currentMaxIdx;
-
                     self.updateLogButtons(true);
 
-                    // Auto-scroll to bottom if user was already at bottom
                     if (wasAtBottom) {
                         logContainer.scrollTop = logContainer.scrollHeight;
                     }
                 } else {
-                    // Update max_idx even if no new messages
                     self.currentMaxIdx = response.max_idx || self.currentMaxIdx;
                 }
 
-                // Update window title with active project
                 self.updateTitle(response.active_project);
             }
         });
     }
 
     startPeriodicPolling() {
-        // Clear any existing interval
         if (this.pollInterval) {
             clearInterval(this.pollInterval);
         }
-
-        // Start polling every second (1000ms)
         this.pollInterval = setInterval(this.pollForNewLogs.bind(this), 1000);
     }
 
@@ -1459,10 +1352,10 @@ class Dashboard {
 
     loadStats() {
         let self = this;
-        $.when($.ajax({url: '/get_tool_stats', type: 'GET'}), $.ajax({
-            url: '/get_token_count_estimator_name',
-            type: 'GET'
-        })).done(function (statsResp, estimatorResp) {
+        $.when(
+            $.ajax({ url: '/get_tool_stats', type: 'GET' }),
+            $.ajax({ url: '/get_token_count_estimator_name', type: 'GET' })
+        ).done(function (statsResp, estimatorResp) {
             const stats = statsResp[0].stats;
             const tokenCountEstimatorName = estimatorResp[0].token_count_estimator_name;
             self.displayStats(stats, tokenCountEstimatorName);
@@ -1474,9 +1367,12 @@ class Dashboard {
     clearStats() {
         let self = this;
         $.ajax({
-            url: '/clear_tool_stats', type: 'POST', success: function () {
+            url: '/clear_tool_stats',
+            type: 'POST',
+            success: function () {
                 self.loadStats();
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error clearing stats:', error);
             }
         });
@@ -1484,36 +1380,30 @@ class Dashboard {
 
     displayStats(stats, tokenCountEstimatorName) {
         const names = Object.keys(stats);
-        // If no stats collected
         if (names.length === 0) {
-            // hide summary, charts, estimator name
             $('#stats-summary').hide();
             $('#estimator-name').hide();
             $('.charts-container').hide();
-            // show no-stats message
             $('#no-stats-message').show();
             return;
-        } else {
-            // Ensure everything is visible
-            $('#estimator-name').show();
-            $('#stats-summary').show();
-            $('.charts-container').show();
-            $('#no-stats-message').hide();
         }
 
-        $('#estimator-name').html(`<strong>Token count estimator:</strong> ${tokenCountEstimatorName}`);
+        $('#estimator-name').show();
+        $('#stats-summary').show();
+        $('.charts-container').show();
+        $('#no-stats-message').hide();
+
+        $('#estimator-name').html('<strong>Token estimator:</strong> ' + tokenCountEstimatorName);
 
         const counts = names.map(n => stats[n].num_times_called);
         const inputTokens = names.map(n => stats[n].input_tokens);
         const outputTokens = names.map(n => stats[n].output_tokens);
         const totalTokens = names.map(n => stats[n].input_tokens + stats[n].output_tokens);
 
-        // Calculate totals for summary table
         const totalCalls = counts.reduce((sum, count) => sum + count, 0);
         const totalInputTokens = inputTokens.reduce((sum, tokens) => sum + tokens, 0);
         const totalOutputTokens = outputTokens.reduce((sum, tokens) => sum + tokens, 0);
 
-        // Generate consistent colors for tools
         const colors = this.generateColors(names.length);
 
         const countCtx = document.getElementById('count-chart');
@@ -1526,121 +1416,82 @@ class Dashboard {
         if (this.inputChart) this.inputChart.destroy();
         if (this.outputChart) this.outputChart.destroy();
 
-        // Update summary table
         this.updateSummaryTable(totalCalls, totalInputTokens, totalOutputTokens);
 
-        // Register datalabels plugin
         Chart.register(ChartDataLabels);
 
-        // Get theme-aware colors
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        const textColor = isDark ? '#ffffff' : '#000000';
-        const gridColor = isDark ? '#444' : '#ddd';
+        const textColor = isDark ? '#f7fafc' : '#1a1d23';
+        const gridColor = isDark ? '#2d3748' : '#e2e8f0';
 
-        // Tool calls pie chart
         this.countChart = new Chart(countCtx, {
-            type: 'pie', data: {
-                labels: names, datasets: [{
-                    data: counts, backgroundColor: colors
-                }]
-            }, options: {
+            type: 'pie',
+            data: {
+                labels: names,
+                datasets: [{ data: counts, backgroundColor: colors }]
+            },
+            options: {
                 plugins: {
-                    legend: {
-                        display: true, labels: {
-                            color: textColor
-                        }
-                    }, datalabels: {
-                        display: true, color: 'white', font: {weight: 'bold'}, formatter: (value) => value
-                    }
+                    legend: { display: true, labels: { color: textColor } },
+                    datalabels: { display: true, color: 'white', font: { weight: 'bold' }, formatter: (value) => value }
                 }
             }
         });
 
-        // Input tokens pie chart
         this.inputChart = new Chart(inputCtx, {
-            type: 'pie', data: {
-                labels: names, datasets: [{
-                    data: inputTokens, backgroundColor: colors
-                }]
-            }, options: {
+            type: 'pie',
+            data: {
+                labels: names,
+                datasets: [{ data: inputTokens, backgroundColor: colors }]
+            },
+            options: {
                 plugins: {
-                    legend: {
-                        display: true, labels: {
-                            color: textColor
-                        }
-                    }, datalabels: {
-                        display: true, color: 'white', font: {weight: 'bold'}, formatter: (value) => value
-                    }
+                    legend: { display: true, labels: { color: textColor } },
+                    datalabels: { display: true, color: 'white', font: { weight: 'bold' }, formatter: (value) => value }
                 }
             }
         });
 
-        // Output tokens pie chart
         this.outputChart = new Chart(outputCtx, {
-            type: 'pie', data: {
-                labels: names, datasets: [{
-                    data: outputTokens, backgroundColor: colors
-                }]
-            }, options: {
+            type: 'pie',
+            data: {
+                labels: names,
+                datasets: [{ data: outputTokens, backgroundColor: colors }]
+            },
+            options: {
                 plugins: {
-                    legend: {
-                        display: true, labels: {
-                            color: textColor
-                        }
-                    }, datalabels: {
-                        display: true, color: 'white', font: {weight: 'bold'}, formatter: (value) => value
-                    }
+                    legend: { display: true, labels: { color: textColor } },
+                    datalabels: { display: true, color: 'white', font: { weight: 'bold' }, formatter: (value) => value }
                 }
             }
         });
 
-        // Combined input/output tokens bar chart
         this.tokensChart = new Chart(tokensCtx, {
-            type: 'bar', data: {
-                labels: names, datasets: [{
-                    label: 'Input Tokens', data: inputTokens, backgroundColor: colors.map(color => color + '80'), // Semi-transparent
-                    borderColor: colors, borderWidth: 2, borderSkipped: false, yAxisID: 'y'
-                }, {
-                    label: 'Output Tokens', data: outputTokens, backgroundColor: colors, yAxisID: 'y1'
-                }]
-            }, options: {
-                responsive: true, plugins: {
-                    legend: {
-                        labels: {
-                            color: textColor
-                        }
-                    }
-                }, scales: {
-                    x: {
-                        ticks: {
-                            color: textColor
-                        }, grid: {
-                            color: gridColor
-                        }
-                    }, y: {
-                        type: 'linear', display: true, position: 'left', beginAtZero: true, title: {
-                            display: true, text: 'Input Tokens', color: textColor
-                        }, ticks: {
-                            color: textColor
-                        }, grid: {
-                            color: gridColor
-                        }
-                    }, y1: {
-                        type: 'linear', display: true, position: 'right', beginAtZero: true, title: {
-                            display: true, text: 'Output Tokens', color: textColor
-                        }, ticks: {
-                            color: textColor
-                        }, grid: {
-                            drawOnChartArea: false, color: gridColor
-                        }
-                    }
+            type: 'bar',
+            data: {
+                labels: names,
+                datasets: [
+                    { label: 'Input Tokens', data: inputTokens, backgroundColor: colors.map(color => color + '80'), borderColor: colors, borderWidth: 2, borderSkipped: false, yAxisID: 'y' },
+                    { label: 'Output Tokens', data: outputTokens, backgroundColor: colors, yAxisID: 'y1' }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { labels: { color: textColor } }
+                },
+                scales: {
+                    x: { ticks: { color: textColor }, grid: { color: gridColor } },
+                    y: { type: 'linear', display: true, position: 'left', beginAtZero: true, title: { display: true, text: 'Input Tokens', color: textColor }, ticks: { color: textColor }, grid: { color: gridColor } },
+                    y1: { type: 'linear', display: true, position: 'right', beginAtZero: true, title: { display: true, text: 'Output Tokens', color: textColor }, ticks: { color: textColor }, grid: { drawOnChartArea: false, color: gridColor } }
                 }
             }
         });
     }
 
     generateColors(count) {
-        const colors = ['#FF6384', '#36A2EB', '#FFCE56', '#4BC0C0', '#9966FF', '#FF9F40', '#FF6384', '#C9CBCF', '#4BC0C0', '#FF6384'];
+        const colors = ['#e88d3c', '#6366f1', '#22c55e', '#f59e0b', '#ef4444', '#8b5cf6', '#06b6d4', '#ec4899', '#84cc16', '#f97316'];
         return Array.from({length: count}, (_, i) => colors[i % colors.length]);
     }
 
@@ -1649,9 +1500,9 @@ class Dashboard {
             <table class="stats-summary">
                 <tr><th>Metric</th><th>Total</th></tr>
                 <tr><td>Tool Calls</td><td>${totalCalls}</td></tr>
-                <tr><td>Input Tokens</td><td>${totalInputTokens}</td></tr>
-                <tr><td>Output Tokens</td><td>${totalOutputTokens}</td></tr>
-                <tr><td>Total Tokens</td><td>${totalInputTokens + totalOutputTokens}</td></tr>
+                <tr><td>Input Tokens</td><td>${totalInputTokens.toLocaleString()}</td></tr>
+                <tr><td>Output Tokens</td><td>${totalOutputTokens.toLocaleString()}</td></tr>
+                <tr><td>Total Tokens</td><td>${(totalInputTokens + totalOutputTokens).toLocaleString()}</td></tr>
             </table>
         `;
         $('#stats-summary').html(tableHtml);
@@ -1660,34 +1511,27 @@ class Dashboard {
     // ===== Theme Methods =====
 
     initializeTheme() {
-        // Check if user has manually set a theme preference
         const savedTheme = localStorage.getItem('serena-theme');
 
         if (savedTheme) {
-            // User has manually set a preference, use it
             this.setTheme(savedTheme);
         } else {
-            // No manual preference, detect system color scheme
             this.detectSystemTheme();
         }
 
-        // Listen for system theme changes
         this.setupSystemThemeListener();
     }
 
     detectSystemTheme() {
-        // Check if system prefers dark mode
         const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
         const theme = prefersDark ? 'dark' : 'light';
         this.setTheme(theme);
     }
 
     setupSystemThemeListener() {
-        // Listen for changes in system color scheme
         const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
 
         const handleSystemThemeChange = (e) => {
-            // Only auto-switch if user hasn't manually set a preference
             const savedTheme = localStorage.getItem('serena-theme');
             if (!savedTheme) {
                 const newTheme = e.matches ? 'dark' : 'light';
@@ -1695,11 +1539,9 @@ class Dashboard {
             }
         };
 
-        // Add listener for system theme changes
         if (mediaQuery.addEventListener) {
             mediaQuery.addEventListener('change', handleSystemThemeChange);
         } else {
-            // Fallback for older browsers
             mediaQuery.addListener(handleSystemThemeChange);
         }
     }
@@ -1707,20 +1549,13 @@ class Dashboard {
     toggleTheme() {
         const currentTheme = document.documentElement.getAttribute('data-theme') || 'light';
         const newTheme = currentTheme === 'light' ? 'dark' : 'light';
-
-        // When user manually toggles, save their preference
         localStorage.setItem('serena-theme', newTheme);
         this.setTheme(newTheme);
     }
 
-    /**
-     * @param theme {'light' | 'dark'}
-     */
     setTheme(theme) {
-        // Set the theme on the document element
         document.documentElement.setAttribute('data-theme', theme);
 
-        // Update the theme toggle button
         if (theme === 'dark') {
             this.$themeIcon.text('☀️');
             this.$themeText.text('Light');
@@ -1729,25 +1564,20 @@ class Dashboard {
             this.$themeText.text('Dark');
         }
 
-        // Update theme-aware images
         $(".theme-aware-img").each(function() {
             const $img = $(this);
             updateThemeAwareImage($img, theme);
         });
 
-        // Save to localStorage
         localStorage.setItem('serena-theme', theme);
-
-        // Update charts if they exist
         this.updateChartsTheme();
     }
 
     updateChartsTheme() {
         const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
-        const textColor = isDark ? '#ffffff' : '#000000';
-        const gridColor = isDark ? '#444' : '#ddd';
+        const textColor = isDark ? '#f7fafc' : '#1a1d23';
+        const gridColor = isDark ? '#2d3748' : '#e2e8f0';
 
-        // Update existing charts if they exist and have the scales property
         if (this.countChart && this.countChart.options.plugins) {
             if (this.countChart.options.plugins.legend) {
                 this.countChart.options.plugins.legend.labels.color = textColor;
@@ -1788,13 +1618,8 @@ class Dashboard {
     // ===== Language Management Methods =====
 
     confirmRemoveLanguage(language) {
-        // Store the language to remove
         this.languageToRemove = language;
-
-        // Set language name in modal
         this.$removeLanguageName.text(language);
-
-        // Show modal
         this.$removeLanguageModal.fadeIn(200);
     }
 
@@ -1814,16 +1639,18 @@ class Dashboard {
         const self = this;
 
         $.ajax({
-            url: '/remove_language', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                language: language
-            }), success: function (response) {
+            url: '/remove_language',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ language: language }),
+            success: function (response) {
                 if (response.status === 'success') {
-                    // Reload config to show updated language list
                     self.loadConfigOverview();
                 } else {
                     alert('Error removing language ' + language + ": " + response.message);
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error removing language:', error);
                 alert('Error removing language: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
             }
@@ -1831,13 +1658,8 @@ class Dashboard {
     }
 
     openLanguageModal() {
-        // Set project name in modal
         this.$modalProjectName.text(this.activeProjectName || 'Unknown');
-
-        // Load available languages into modal dropdown
         this.loadAvailableLanguages();
-
-        // Show modal
         this.$addLanguageModal.fadeIn(200);
     }
 
@@ -1850,23 +1672,23 @@ class Dashboard {
     loadAvailableLanguages() {
         let self = this;
         $.ajax({
-            url: '/get_available_languages', type: 'GET', success: function (response) {
+            url: '/get_available_languages',
+            type: 'GET',
+            success: function (response) {
                 const languages = response.languages || [];
-                // Clear all existing options
                 self.$modalLanguageSelect.empty();
 
                 if (languages.length === 0) {
-                    // Show message if no languages available
                     self.$modalLanguageSelect.append($('<option>').val('').text('No languages available to add'));
                     self.$modalAddBtn.prop('disabled', true);
                 } else {
-                    // Add language options
                     languages.forEach(function (language) {
                         self.$modalLanguageSelect.append($('<option>').val(language).text(language));
                     });
                     self.$modalAddBtn.prop('disabled', false);
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error loading available languages:', error);
             }
         });
@@ -1881,33 +1703,33 @@ class Dashboard {
 
         const self = this;
 
-        // Close modal immediately
         self.closeLanguageModal();
 
-        // Hide the inline add language button and show spinner
         $('#add-language-btn').hide();
         $('#add-language-spinner').show();
         self.isAddingLanguage = true;
 
         $.ajax({
-            url: '/add_language', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                language: selectedLanguage
-            }), success: function (response) {
+            url: '/add_language',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ language: selectedLanguage }),
+            success: function (response) {
                 if (response.status === 'success') {
                     console.log("Language added successfully");
                 } else {
                     alert('Error adding language ' + selectedLanguage + ": " + response.message);
-                    // Restore button visibility on error
                     $('#add-language-btn').show();
                     $('#add-language-spinner').hide();
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error adding language:', error);
                 alert('Error adding language: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
-                // Restore button visibility on error
                 $('#add-language-btn').show();
                 $('#add-language-spinner').hide();
-            }, complete: function () {
+            },
+            complete: function () {
                 self.isAddingLanguage = false;
                 self.loadConfigOverview();
             }
@@ -1921,14 +1743,14 @@ class Dashboard {
         this.currentMemoryName = memoryName;
         this.memoryContentDirty = false;
 
-        // Set memory name in modal
         this.$editMemoryName.text(memoryName);
 
-        // Load memory content
         $.ajax({
-            url: '/get_memory', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                memory_name: memoryName
-            }), success: function (response) {
+            url: '/get_memory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ memory_name: memoryName }),
+            success: function (response) {
                 if (response.status === 'error') {
                     alert('Error: ' + response.message);
                     return;
@@ -1937,7 +1759,8 @@ class Dashboard {
                 self.$editMemoryContent.val(response.content);
                 self.memoryContentDirty = false;
                 self.$editMemoryModal.fadeIn(200);
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error loading memory:', error);
                 alert('Error loading memory: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
             }
@@ -1945,7 +1768,6 @@ class Dashboard {
     }
 
     closeEditMemoryModal() {
-        // Check if there are unsaved changes
         if (this.memoryContentDirty) {
             if (!confirm('You have unsaved changes. Are you sure you want to close?')) {
                 return;
@@ -1973,29 +1795,29 @@ class Dashboard {
             return;
         }
 
-        // Disable button during request
         self.$editMemorySaveBtn.prop('disabled', true).text('Saving...');
 
         $.ajax({
-            url: '/save_memory', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                memory_name: memoryName, content: content
-            }), success: function (response) {
+            url: '/save_memory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ memory_name: memoryName, content: content }),
+            success: function (response) {
                 if (response.status === 'success') {
-                    // Update original content and reset dirty flag
                     self.originalMemoryContent = content;
                     self.memoryContentDirty = false;
-                    // Close modal
                     self.$editMemoryModal.fadeOut(200);
                     self.currentMemoryName = null;
                 } else {
                     alert('Error: ' + response.message);
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error saving memory:', error);
                 alert('Error saving memory: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
-            }, complete: function () {
-                // Re-enable button
-                self.$editMemorySaveBtn.prop('disabled', false).text('Save');
+            },
+            complete: function () {
+                self.$editMemorySaveBtn.prop('disabled', false).text('Save Changes');
             }
         });
     }
@@ -2016,15 +1838,13 @@ class Dashboard {
         const newName = this.$editMemoryRenameInput.val().trim();
         const oldName = this.currentMemoryName;
 
-        // If name unchanged, just cancel
         if (!newName || newName === oldName) {
             this.cancelMemoryRename();
             return;
         }
 
-        // Validate memory name (alphanumeric, underscores, and slashes for subdirectories)
         if (!/^[a-zA-Z0-9_]+(?:\/[a-zA-Z0-9_]+)*$/.test(newName)) {
-            alert('Memory name can only contain letters, numbers, underscores, and "/" for subdirectories (e.g., "topic/memory_name")');
+            alert('Memory name can only contain letters, numbers, underscores, and "/" for subdirectories');
             this.$editMemoryRenameInput.focus();
             return;
         }
@@ -2033,37 +1853,35 @@ class Dashboard {
         this.$editMemoryRenameInput.prop('disabled', true);
 
         $.ajax({
-            url: '/rename_memory', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                old_name: oldName, new_name: newName
-            }), success: function (response) {
+            url: '/rename_memory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ old_name: oldName, new_name: newName }),
+            success: function (response) {
                 if (response.status === 'success') {
                     self.currentMemoryName = newName;
                     self.$editMemoryName.text(newName);
                     self.cancelMemoryRename();
-                    // Reload config to reflect the rename in the memory list
                     self.loadConfigOverview();
                 } else {
                     alert('Error: ' + response.message);
                     self.$editMemoryRenameInput.focus();
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error renaming memory:', error);
                 alert('Error renaming memory: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
                 self.$editMemoryRenameInput.focus();
-            }, complete: function () {
+            },
+            complete: function () {
                 self.$editMemoryRenameInput.prop('disabled', false);
             }
         });
     }
 
     confirmDeleteMemory(memoryName) {
-        // Set memory name to delete
         this.memoryToDelete = memoryName;
-
-        // Set memory name in modal
         this.$deleteMemoryName.text(memoryName);
-
-        // Show modal
         this.$deleteMemoryModal.fadeIn(200);
     }
 
@@ -2083,16 +1901,18 @@ class Dashboard {
         const self = this;
 
         $.ajax({
-            url: '/delete_memory', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                memory_name: memoryName
-            }), success: function (response) {
+            url: '/delete_memory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ memory_name: memoryName }),
+            success: function (response) {
                 if (response.status === 'success') {
-                    // Reload config to show updated memory list
                     self.loadConfigOverview();
                 } else {
                     alert('Error: ' + response.message);
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error deleting memory:', error);
                 alert('Error deleting memory: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
             }
@@ -2100,16 +1920,9 @@ class Dashboard {
     }
 
     openCreateMemoryModal() {
-        // Set project name in modal
         this.$createMemoryProjectName.text(this.activeProjectName || 'Unknown');
-
-        // Clear the input field
         this.$createMemoryNameInput.val('');
-
-        // Show modal
         this.$createMemoryModal.fadeIn(200);
-
-        // Focus on the input field
         setTimeout(() => {
             this.$createMemoryNameInput.focus();
         }, 250);
@@ -2129,27 +1942,24 @@ class Dashboard {
             return;
         }
 
-        // Validate memory name (alphanumeric, underscores, and slashes for subdirectories)
         if (!/^[a-zA-Z0-9_]+(?:\/[a-zA-Z0-9_]+)*$/.test(memoryName)) {
-            alert('Memory name can only contain letters, numbers, underscores, and "/" for subdirectories (e.g., "topic/memory_name")');
+            alert('Memory name can only contain letters, numbers, underscores, and "/" for subdirectories');
             return;
         }
 
         const self = this;
 
-        // Disable button during request
         self.$createMemoryCreateBtn.prop('disabled', true).text('Creating...');
 
         $.ajax({
-            url: '/save_memory', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                memory_name: memoryName, content: ''
-            }), success: function (response) {
+            url: '/save_memory',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ memory_name: memoryName, content: '' }),
+            success: function (response) {
                 if (response.status === 'success') {
-                    // Close the create modal
                     self.closeCreateMemoryModal();
-                    // Reload config to show the new memory
                     self.loadConfigOverview();
-                    // Open the edit modal for the newly created memory
                     setTimeout(() => {
                         self.openEditMemoryModal(memoryName);
                     }, 500);
@@ -2157,7 +1967,8 @@ class Dashboard {
                     alert('Error: ' + response.message);
                     self.$createMemoryCreateBtn.prop('disabled', false).text('Create');
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error creating memory:', error);
                 alert('Error creating memory: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
                 self.$createMemoryCreateBtn.prop('disabled', false).text('Create');
@@ -2190,37 +2001,25 @@ class Dashboard {
         });
     }
 
-    /**
-     * Display news items given unread IDs and the full news data mapping.
-     * @param {number[]} newsIds - array of unread news IDs
-     * @param {Object} newsData - mapping of news ID strings to HTML content
-     */
     displayNews(newsIds, newsData) {
         let self = this;
         console.log('displayNews called with:', newsIds);
-        // Sort newest first (descending order)
         newsIds.sort((a, b) => b - a);
 
         if (newsIds.length === 0) {
-            console.log('No news items to display.');
             self.$newsSection.hide();
             return;
         }
         self.$newsSection.show();
         self.$newsDisplay.empty();
-        console.log('Displaying ' + newsIds.length + ' news items.');
 
         newsIds.forEach(function(newsId) {
             const html = newsData[String(newsId)];
-            if (!html) {
-                console.warn('No news content found for ID ' + newsId);
-                return;
-            }
-            // Wrap the HTML in a container with a button
+            if (!html) return;
+
             let $newsContainer = $('<div class="news-container">').attr('data-news-id', newsId);
             let $newsContent = $(html);
 
-            // Add button for marking as read
             let $markRead = $('<div class="news-mark-read">');
             let $button = $('<button class="news-mark-read-btn">').attr('data-news-id', newsId).text('Mark as read');
 
@@ -2230,7 +2029,6 @@ class Dashboard {
             $newsContainer.append($newsContent);
             self.$newsDisplay.append($newsContainer);
 
-            // Bind button click event
             $button.on('click', function() {
                 const btn = $(this);
                 btn.prop('disabled', true).text('Marking...');
@@ -2248,7 +2046,6 @@ class Dashboard {
             data: JSON.stringify({ news_snippet_id: newsId }),
             success: function(response) {
                 if (response.status === 'success') {
-                    // Reload news to show updated list
                     self.loadNews();
                 } else {
                     console.error('Error marking news as read:', response.message);
@@ -2266,9 +2063,10 @@ class Dashboard {
         const self = this;
         this.serenaConfigContentDirty = false;
 
-        // Load serena config content
         $.ajax({
-            url: '/get_serena_config', type: 'GET', success: function (response) {
+            url: '/get_serena_config',
+            type: 'GET',
+            success: function (response) {
                 if (response.status === 'error') {
                     alert('Error: ' + response.message);
                     return;
@@ -2277,13 +2075,13 @@ class Dashboard {
                 self.$editSerenaConfigContent.val(response.content);
                 self.serenaConfigContentDirty = false;
                 self.$editSerenaConfigModal.fadeIn(200);
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error loading serena config:', error);
                 alert('Error loading serena config: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
             }
         });
 
-        // Track changes to config content
         this.$editSerenaConfigContent.off('input').on('input', function () {
             const currentContent = self.$editSerenaConfigContent.val();
             self.serenaConfigContentDirty = (currentContent !== self.originalSerenaConfigContent);
@@ -2291,7 +2089,6 @@ class Dashboard {
     }
 
     closeEditSerenaConfigModal() {
-        // Check if there are unsaved changes
         if (this.serenaConfigContentDirty) {
             if (!confirm('You have unsaved changes. Are you sure you want to close?')) {
                 return;
@@ -2307,29 +2104,29 @@ class Dashboard {
         const self = this;
         const content = this.$editSerenaConfigContent.val();
 
-        // Disable button during request
         self.$editSerenaConfigSaveBtn.prop('disabled', true).text('Saving...');
 
         $.ajax({
-            url: '/save_serena_config', type: 'POST', contentType: 'application/json', data: JSON.stringify({
-                content: content
-            }), success: function (response) {
+            url: '/save_serena_config',
+            type: 'POST',
+            contentType: 'application/json',
+            data: JSON.stringify({ content: content }),
+            success: function (response) {
                 if (response.status === 'success') {
-                    // Update original content and reset dirty flag
                     self.originalSerenaConfigContent = content;
                     self.serenaConfigContentDirty = false;
-                    // Close modal
                     self.$editSerenaConfigModal.fadeOut(200);
                     alert('Configuration saved successfully. Please restart Serena for changes to take effect.');
                 } else {
                     alert('Error: ' + response.message);
                 }
-            }, error: function (xhr, status, error) {
+            },
+            error: function (xhr, status, error) {
                 console.error('Error saving serena config:', error);
                 alert('Error saving serena config: ' + (xhr.responseJSON ? xhr.responseJSON.message : error));
-            }, complete: function () {
-                // Re-enable button
-                self.$editSerenaConfigSaveBtn.prop('disabled', false).text('Save');
+            },
+            complete: function () {
+                self.$editSerenaConfigSaveBtn.prop('disabled', false).text('Save Configuration');
             }
         });
     }
@@ -2341,22 +2138,22 @@ class Dashboard {
         const _shutdown = function () {
             console.log("Triggering shutdown");
             $.ajax({
-                url: '/shutdown', type: "PUT", contentType: 'application/json',
+                url: '/shutdown',
+                type: "PUT",
+                contentType: 'application/json',
             });
-            self.$errorContainer.html('<div class="error-message">Shutting down ...</div>')
+            self.$errorContainer.html('<div class="error-message">Shutting down ...</div>');
             setTimeout(function () {
                 window.close();
             }, 1000);
-        }
+        };
 
-        // ask for confirmation using a dialog
         if (confirm("This will fully terminate the Serena server.")) {
             _shutdown();
         } else {
             console.log("Shutdown cancelled");
         }
 
-        // Close menu
         self.$menuDropdown.hide();
     }
 }
