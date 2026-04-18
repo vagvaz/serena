@@ -248,5 +248,11 @@ class LanguageServerManager:
             if ls.is_running():
                 ls.save_cache()
 
+    def is_running(self) -> bool:
+        """
+        :return: True if any language server is currently running
+        """
+        return any(ls.is_running() for ls in self.iter_language_servers())
+
     def has_suitable_ls_for_file(self, relative_file_path: str) -> bool:
         return self._get_suitable_language_server(relative_file_path) is not None

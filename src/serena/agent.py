@@ -7,7 +7,10 @@ import multiprocessing
 import os
 import platform
 import signal
+import subprocess
+import sys
 import threading
+import time
 from collections import defaultdict
 from collections.abc import Callable, Iterator, Sequence
 from contextlib import contextmanager
@@ -519,6 +522,8 @@ class SerenaAgent:
         self._active_projects: dict[str, Project] = {}  # project_name → Project instance
         self._session_projects: dict[str, str | None] = {}  # session_id → project_name (cached per session)
         self._project_activation_callback = project_activation_callback
+        self._project_last_active: dict[str, float] = {}  # project_name → last_active_timestamp
+        self._idle_timer: threading.Timer | None = None
         self._gui_log_viewer: Optional["GuiLogViewer"] = None
         self._dashboard_manager: DashboardManager | None = None
         self._project_prompt_status = ProjectPromptProvisionStatus()
@@ -638,6 +643,12 @@ class SerenaAgent:
         # update the active tools (considering the active project, if any)
         self._active_tools: AvailableTools
         self._update_active_tools()
+
+        # Restore previously active projects from disk state
+        self._restore_projects_from_disk()
+
+        # Start the idle project checker
+        self._start_idle_checker()
 
         # start the dashboard (web frontend), registering its log handler
         # should be the last thing to happen in the initialization since the dashboard
@@ -964,6 +975,80 @@ class SerenaAgent:
         if cached_name:
             return self._active_projects.get(cached_name)
         return None
+
+    # ── Idle timeout tracking ──────────────────────────────────────────────
+
+    def _touch_project(self, project: Project) -> None:
+        """Update the last-active timestamp for a project."""
+        self._project_last_active[project.project_name] = time.time()
+
+    def _start_idle_checker(self) -> None:
+        """Start the periodic idle project checker."""
+        interval = self.serena_config.project_idle_check_interval_seconds
+        self._idle_timer = threading.Timer(interval, self._check_idle_projects)
+        self._idle_timer.daemon = True
+        self._idle_timer.start()
+
+    def _check_idle_projects(self) -> None:
+        """Periodic checker that shuts down projects that have been idle too long."""
+        now = time.time()
+        timeout = self.serena_config.project_idle_timeout_seconds
+        changed = False
+
+        for name, last_active in list(self._project_last_active.items()):
+            if now - last_active > timeout:
+                project = self._active_projects.get(name)
+                if project:
+                    log.info(f"Project '{name}' idle for {now - last_active:.0f}s (timeout={timeout}s), shutting down")
+                    self._persist_project_state(project)
+                    self._remove_active_project(name)
+                    changed = True
+
+        # Persist all remaining projects' state periodically
+        if not changed:
+            for project in list(self._active_projects.values()):
+                self._persist_project_state(project)
+
+        # Reschedule
+        self._start_idle_checker()
+
+    def _persist_project_state(self, project: Project) -> None:
+        """Save a project's active state to disk for restoration on next startup."""
+        try:
+            state_file = os.path.join(project.serena_folder, "active_state.json")
+            ls_manager = project.language_server_manager
+            state = {
+                "project_name": project.project_name,
+                "project_root": project.project_root,
+                "last_active": self._project_last_active.get(project.project_name),
+                "lsp_running": ls_manager.is_running() if ls_manager else False,
+            }
+            os.makedirs(os.path.dirname(state_file), exist_ok=True)
+            with open(state_file, "w") as f:
+                json.dump(state, f)
+        except Exception as e:
+            log.warning(f"Failed to persist state for project '{project.project_name}': {e}")
+
+    def _persist_all_projects(self) -> None:
+        """Save state for all active projects."""
+        for project in list(self._active_projects.values()):
+            self._persist_project_state(project)
+
+    def _restore_projects_from_disk(self) -> None:
+        """On agent startup, restore previously active projects from their saved state."""
+        for registered in self.serena_config.projects:
+            try:
+                state_file = os.path.join(registered.project_root, ".serena", "active_state.json")
+                if os.path.exists(state_file):
+                    with open(state_file) as f:
+                        state = json.load(f)
+                    # Re-add the project (LSP will be lazily loaded, not started immediately)
+                    project = registered.get_project()
+                    if project:
+                        self._add_active_project(project, update_active_modes=False, update_active_tools=False)
+                        log.info(f"Restored project '{project.project_name}' from disk state")
+            except Exception as e:
+                log.warning(f"Failed to restore project '{registered.project_name}' from disk: {e}")
 
     def set_modes(self, mode_names: list[str]) -> None:
         """
@@ -1394,12 +1479,19 @@ class SerenaAgent:
         Shutdown handler of the agent, freeing resources and stopping background tasks.
         """
         log.info("SerenaAgent is shutting down ...")
+        # Cancel the idle checker
+        if self._idle_timer is not None:
+            self._idle_timer.cancel()
+            self._idle_timer = None
+        # Persist all project states before shutdown
+        self._persist_all_projects()
         # Shutdown all active projects
         for project_name, project in list(self._active_projects.items()):
             log.info(f"Shutting down active project '{project_name}' ...")
             project.shutdown(timeout=timeout)
         self._active_projects.clear()
         self._session_projects.clear()
+        self._project_last_active.clear()
         if self._gui_log_viewer:
             log.info("Stopping the GUI log window ...")
             self._gui_log_viewer.stop()

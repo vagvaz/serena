@@ -697,6 +697,12 @@ class SerenaConfig(SharedConfig):
     jetbrains_plugin_server_address: str = "127.0.0.1"
     tool_timeout: float = DEFAULT_TOOL_TIMEOUT
 
+    # Multi-project idle timeout settings
+    project_idle_timeout_seconds: int = 1800  # 30 minutes
+    """Time in seconds after which an inactive project's LSP will be shut down."""
+    project_idle_check_interval_seconds: int = 300  # 5 minutes
+    """Interval in seconds between idle project checks."""
+
     token_count_estimator: str = RegisteredTokenCountEstimator.CHAR_COUNT.name
     """Only relevant if `record_tool_usage` is True; the name of the token count estimator to use for tool usage statistics.
     See the `RegisteredTokenCountEstimator` enum for available options.

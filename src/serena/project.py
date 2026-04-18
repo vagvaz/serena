@@ -381,6 +381,11 @@ class Project(ToStringMixin):
     def path_to_serena_data_folder(self) -> str:
         return self._serena_data_folder
 
+    @property
+    def serena_folder(self) -> str:
+        """Alias for path_to_serena_data_folder() for convenience."""
+        return self._serena_data_folder
+
     def path_to_project_yml(self) -> str:
         return self.serena_config.get_project_yml_location(self.project_root)
 

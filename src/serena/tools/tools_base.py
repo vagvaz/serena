@@ -2,10 +2,12 @@ import inspect
 import json
 from abc import ABC
 from collections.abc import Callable, Iterable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Protocol, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Iterator, Protocol, Self, TypeVar, cast
 
 from mcp import Implementation
 from mcp.server.fastmcp import Context
@@ -28,6 +30,26 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 T = TypeVar("T")
 SUCCESS_RESULT = "OK"
+
+# Context variable for the current project context.
+# This is set by the tool execution wrapper and read by Component.project.
+# It is async-safe and scoped to the logical execution context (not OS threads).
+_current_project: ContextVar[Project | None] = ContextVar("_current_project", default=None)
+
+
+@contextmanager
+def project_context(project: Project | None) -> Iterator[None]:
+    """
+    Context manager that sets the current project in the context variable.
+    Use this to temporarily set the project context for tool execution.
+
+    :param project: the project to set as current, or None to clear
+    """
+    token = _current_project.set(project)
+    try:
+        yield
+    finally:
+        _current_project.reset(token)
 
 
 class Component(ABC):
@@ -56,6 +78,11 @@ class Component(ABC):
 
     @property
     def project(self) -> Project:
+        # First try the context variable (set by the tool execution wrapper)
+        proj = _current_project.get()
+        if proj is not None:
+            return proj
+        # Fall back to the agent's active project (backward compatibility)
         return self.agent.get_active_project_or_raise()
 
     def create_code_editor(self) -> "CodeEditor":
@@ -304,11 +331,16 @@ class Tool(Component):
     def is_symbolic(self) -> bool:
         return issubclass(self.__class__, ToolMarkerSymbolicRead) or issubclass(self.__class__, ToolMarkerSymbolicEdit)
 
-    def apply_ex(self, log_call: bool = True, catch_exceptions: bool = True, mcp_ctx: Context | None = None, **kwargs) -> str:  # type: ignore
+    def apply_ex(self, log_call: bool = True, catch_exceptions: bool = True, mcp_ctx: Context | None = None, cwd: str | None = None, **kwargs) -> str:  # type: ignore
         """
-        Applies the tool with logging and exception handling, using the given keyword arguments
+        Applies the tool with logging and exception handling, using the given keyword arguments.
+
+        :param cwd: the current working directory for resolving the project context.
+            If provided, the project whose root is a prefix of cwd will be used.
+            Falls back to the session-cached project, then the first active project.
         """
-        session_id = "global"
+        # Extract session ID from MCP context
+        session_id: str | None = None
         if mcp_ctx is not None:
             try:
                 session_id = "%x" % id(mcp_ctx.session)
@@ -319,8 +351,15 @@ class Tool(Component):
                     if client_str != self.get_last_tool_call_client_str():
                         log.debug(f"Updating client info: {client_info}")
                         self.set_last_tool_call_client_str(client_str)
+                    # Extract session ID
+                    session_id = getattr(mcp_ctx.session, "id", None) or getattr(mcp_ctx.session, "session_id", None)
             except BaseException as e:
                 log.info(f"Failed to get client info: {e}.")
+
+        # Resolve the project for this tool call
+        target_project: Project | None = None
+        if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
+            target_project = self.agent.resolve_session_project(session_id, cwd)
 
         def task() -> str:
             apply_fn = self.get_apply_fn()
@@ -332,62 +371,64 @@ class Tool(Component):
                 return f"RuntimeError while checking if tool {self.get_name_from_cls()} is active: {e}"
 
             if log_call:
-                self._log_tool_application(inspect.currentframe(), session_id)
-            try:
-                # check whether the tool requires an active project and language server
-                if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
-                    if self.agent.get_active_project() is None:
-                        return (
-                            "Error: No active project. Ask the user to provide the project path or to select a project from this list of known projects: "
-                            + f"{self.agent.serena_config.project_names}"
-                        )
+                self._log_tool_application(inspect.currentframe())
 
-                # construct apply kwargs, adding session_id if the tool is session-aware
-                apply_kwargs = dict(kwargs)
-                if self._is_session_aware:
-                    apply_kwargs["session_id"] = session_id
-
-                # apply the actual tool
+            # Execute within the resolved project's context
+            with project_context(target_project):
                 try:
-                    result = apply_fn(**apply_kwargs)
-                except SolidLSPException as e:
-                    if e.is_language_server_terminated():
-                        affected_language = e.get_affected_language()
-                        if affected_language is not None:
-                            log.error(
-                                f"Language server terminated while executing tool ({e}). Restarting the language server and retrying ..."
+                    # check whether the tool requires an active project
+                    if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
+                        if target_project is None:
+                            return (
+                                "Error: No active project. Ask the user to provide the project path or to select a project from this list of known projects: "
+                                + f"{self.agent.serena_config.project_names}"
                             )
-                            self.agent.get_language_server_manager_or_raise().restart_language_server(affected_language)
-                            result = apply_fn(**apply_kwargs)
+
+                    # apply the actual tool
+                    try:
+                        result = apply_fn(**kwargs)
+                    except SolidLSPException as e:
+                        if e.is_language_server_terminated():
+                            affected_language = e.get_affected_language()
+                            if affected_language is not None:
+                                log.error(
+                                    f"Language server terminated while executing tool ({e}). Restarting the language server and retrying ..."
+                                )
+                                self.agent.get_language_server_manager_or_raise().restart_language_server(affected_language)
+                                result = apply_fn(**kwargs)
+                            else:
+                                log.error(
+                                    f"Language server terminated while executing tool ({e}), but affected language is unknown. Not retrying."
+                                )
+                                raise
                         else:
-                            log.error(
-                                f"Language server terminated while executing tool ({e}), but affected language is unknown. Not retrying."
-                            )
                             raise
-                    else:
+
+                    # record tool usage
+                    self.agent.record_tool_usage(kwargs, result, self)
+
+                    # Touch the project's last-active timestamp (for idle timeout)
+                    if target_project is not None:
+                        self.agent._touch_project(target_project)
+
+                except Exception as e:
+                    if not catch_exceptions:
                         raise
+                    msg = f"Error executing tool: {e.__class__.__name__} - {e}"
+                    log.error(f"Error executing tool: {e}", exc_info=e)
+                    result = msg
 
-                # record tool usage
-                self.agent.record_tool_usage(apply_kwargs, result, self)
+                if log_call:
+                    log.info(f"Result: {result}")
 
-            except Exception as e:
-                if not catch_exceptions:
-                    raise
-                msg = f"Error executing tool: {e.__class__.__name__} - {e}"
-                log.error(f"Error executing tool: {e}", exc_info=e)
-                result = msg
+                try:
+                    ls_manager = self.agent.get_language_server_manager()
+                    if ls_manager is not None:
+                        ls_manager.save_all_caches()
+                except Exception as e:
+                    log.error(f"Error saving language server cache: {e}")
 
-            if log_call:
-                log.info(f"Result: {result}")
-
-            try:
-                ls_manager = self.agent.get_language_server_manager()
-                if ls_manager is not None:
-                    ls_manager.save_all_caches()
-            except Exception as e:
-                log.error(f"Error saving language server cache: {e}")
-
-            return result
+                return result
 
         # execute the tool in the agent's task executor, with timeout
         try:
