@@ -57,7 +57,7 @@ class ResponseToolStats(BaseModel):
 
 class ResponseConfigOverview(BaseModel):
     active_project: dict[str, str | None]
-    active_projects: list[dict[str, str | bool | None]]
+    active_projects: list[dict[str, str | bool | float | None]]
     context: dict[str, str]
     modes: list[dict[str, str]]
     active_tools: list[str]
