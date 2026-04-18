@@ -889,6 +889,36 @@ class SerenaAgent:
             raise ValueError("No active project. Please activate a project first.")
         return project
 
+    @property
+    def _project_root_index(self) -> dict[str, Project]:
+        """Cached mapping of project_root → Project for O(1) path resolution."""
+        return {p.project_root: p for p in self._active_projects.values()}
+
+    def resolve_project_for_path(self, cwd: str) -> Project | None:
+        """
+        Find the active project whose root is a prefix of the given path.
+        Uses longest-prefix matching to handle nested projects correctly.
+
+        :param cwd: an absolute path (e.g. current working directory)
+        :return: the matching Project, or None if no active project matches
+        """
+        # Normalize the path
+        cwd = os.path.normpath(cwd)
+
+        # 1. Exact match first
+        root_index = self._project_root_index
+        if cwd in root_index:
+            return root_index[cwd]
+
+        # 2. Longest prefix match (handles subdirectories and nested projects)
+        best_match: Project | None = None
+        best_len = 0
+        for root, project in root_index.items():
+            if cwd.startswith(root) and len(root) > best_len:
+                best_match = project
+                best_len = len(root)
+        return best_match
+
     def set_modes(self, mode_names: list[str]) -> None:
         """
         Set the current mode configurations.
