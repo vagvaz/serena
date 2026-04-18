@@ -14,7 +14,7 @@ from contextlib import contextmanager
 from copy import copy
 from pathlib import Path, PurePath
 from time import perf_counter, sleep
-from typing import Self, Union, cast
+from typing import Any, Optional, Self, Union, cast
 
 import pathspec
 from sensai.util.pickle import getstate, load_pickle
@@ -515,6 +515,10 @@ class SolidLanguageServer(ABC):
         # initialise symbol caches
         self.cache_dir = Path(self._solidlsp_settings.project_data_path) / self.CACHE_FOLDER_NAME / self.language_id
         self.cache_dir.mkdir(parents=True, exist_ok=True)
+
+        # Cache storage mode: "monolithic" (legacy) or "per_file" (new, lazy loading)
+        self._cache_storage_mode = self._solidlsp_settings.cache_storage_mode
+
         # * raw document symbols cache
         self._ls_specific_raw_document_symbols_cache_version = cache_version_raw_document_symbols
         self._raw_document_symbols_cache: dict[str, tuple[str, list[DocumentSymbol] | list[SymbolInformation] | None]] = {}
@@ -1302,6 +1306,13 @@ class SolidLanguageServer(ABC):
         """
 
         def get_cached_raw_document_symbols(cache_key: str, fd: LSPFileBuffer) -> list[SymbolInformation] | list[DocumentSymbol] | None:
+            # In per-file mode, lazily load entry from disk if not in memory
+            if self._cache_storage_mode == "per_file" and cache_key not in self._raw_document_symbols_cache:
+                version = self._raw_document_symbols_cache_version()
+                entry = self._load_per_file_raw_entry(cache_key, version)
+                if entry is not None:
+                    self._raw_document_symbols_cache[cache_key] = entry
+
             file_hash_and_result = self._raw_document_symbols_cache.get(cache_key)
             if file_hash_and_result is None:
                 log.debug("No cache hit for raw document symbols in %s", relative_file_path)
@@ -1336,7 +1347,12 @@ class SolidLanguageServer(ABC):
             # and caching it would permanently serve stale data even after the project is ready.
             if response:
                 self._raw_document_symbols_cache[cache_key] = (fd.content_hash, response)
-                self._raw_document_symbols_cache_is_modified = True
+                if self._cache_storage_mode == "per_file":
+                    # In per-file mode, save immediately to disk
+                    version = self._raw_document_symbols_cache_version()
+                    self._save_per_file_raw_entry(cache_key, version, (fd.content_hash, response))
+                else:
+                    self._raw_document_symbols_cache_is_modified = True
 
             return response
 
@@ -1380,6 +1396,14 @@ class SolidLanguageServer(ABC):
         with self._open_file_context(relative_file_path, file_buffer, open_in_ls=False) as file_data:
             # check if the desired result is cached
             cache_key = relative_file_path
+
+            # In per-file mode, lazily load entry from disk if not in memory
+            if self._cache_storage_mode == "per_file" and cache_key not in self._document_symbols_cache:
+                version = self._document_symbols_cache_version()
+                entry = self._load_per_file_high_level_entry(cache_key, version)
+                if entry is not None:
+                    self._document_symbols_cache[cache_key] = entry
+
             file_hash_and_result = self._document_symbols_cache.get(cache_key)
             if file_hash_and_result is None:
                 log.debug("No cache hit for document symbols in %s", relative_file_path)
@@ -1489,7 +1513,12 @@ class SolidLanguageServer(ABC):
             # update cache
             log.debug("Updating cached document symbols for %s", relative_file_path)
             self._document_symbols_cache[cache_key] = (file_data.content_hash, document_symbols)
-            self._document_symbols_cache_is_modified = True
+            if self._cache_storage_mode == "per_file":
+                # In per-file mode, save immediately to disk
+                version = self._document_symbols_cache_version()
+                self._save_per_file_high_level_entry(cache_key, version, (file_data.content_hash, document_symbols))
+            else:
+                self._document_symbols_cache_is_modified = True
 
             return document_symbols
 
@@ -2387,6 +2416,10 @@ class SolidLanguageServer(ABC):
         return self.DOCUMENT_SYMBOL_CACHE_VERSION
 
     def _save_raw_document_symbols_cache(self) -> None:
+        # In per-file mode, entries are saved immediately on write, nothing to do here
+        if self._cache_storage_mode == "per_file":
+            return
+
         cache_file = self.cache_dir / self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME
 
         if not self._raw_document_symbols_cache_is_modified:
@@ -2412,6 +2445,11 @@ class SolidLanguageServer(ABC):
         return base_version
 
     def _load_raw_document_symbols_cache(self) -> None:
+        if self._cache_storage_mode == "per_file":
+            # In per-file mode, migrate existing monolithic cache then rely on lazy loading
+            self._migrate_monolithic_raw_cache()
+            return
+
         cache_file = self.cache_dir / self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME
 
         if not cache_file.exists():
@@ -2456,7 +2494,38 @@ class SolidLanguageServer(ABC):
                     e,
                 )
 
+    def _migrate_monolithic_raw_cache(self) -> None:
+        """Migrate monolithic raw cache to per-file format if it exists."""
+        from solidlsp.util.per_file_cache import migrate_monolithic_to_per_file
+
+        raw_file = self.cache_dir / self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME
+        if raw_file.exists():
+            try:
+                raw_version = self._raw_document_symbols_cache_version()
+                high_level_version = self._document_symbols_cache_version()
+                raw_cache, high_level_cache = migrate_monolithic_to_per_file(
+                    self.cache_dir,
+                    self.DOCUMENT_SYMBOL_CACHE_FILENAME,
+                    self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME,
+                    high_level_version,
+                    raw_version,
+                )
+                # Populate in-memory dicts from migrated data
+                self._raw_document_symbols_cache = raw_cache
+                self._document_symbols_cache = high_level_cache
+                log.info(
+                    "Per-file cache migration complete: %d raw entries, %d high-level entries",
+                    len(raw_cache),
+                    len(high_level_cache),
+                )
+            except Exception as e:
+                log.warning("Failed to migrate monolithic cache to per-file: %s", e)
+
     def _save_document_symbols_cache(self) -> None:
+        # In per-file mode, entries are saved immediately on write, nothing to do here
+        if self._cache_storage_mode == "per_file":
+            return
+
         cache_file = self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME
 
         if not self._document_symbols_cache_is_modified:
@@ -2475,6 +2544,29 @@ class SolidLanguageServer(ABC):
             )
 
     def _load_document_symbols_cache(self) -> None:
+        if self._cache_storage_mode == "per_file":
+            # In per-file mode, migration is handled by _migrate_monolithic_raw_cache which
+            # migrates both caches at once. If raw cache doesn't exist, check high-level directly.
+            high_level_file = self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME
+            if high_level_file.exists():
+                # Raw cache migration already handled this, but if raw didn't exist, do it here
+                from solidlsp.util.per_file_cache import migrate_monolithic_to_per_file
+
+                try:
+                    raw_version = self._raw_document_symbols_cache_version()
+                    high_level_version = self._document_symbols_cache_version()
+                    _, high_level_cache = migrate_monolithic_to_per_file(
+                        self.cache_dir,
+                        self.DOCUMENT_SYMBOL_CACHE_FILENAME,
+                        self.RAW_DOCUMENT_SYMBOL_CACHE_FILENAME,
+                        high_level_version,
+                        raw_version,
+                    )
+                    self._document_symbols_cache = high_level_cache
+                except Exception as e:
+                    log.warning("Failed to migrate high-level monolithic cache to per-file: %s", e)
+            return
+
         cache_file = self.cache_dir / self.DOCUMENT_SYMBOL_CACHE_FILENAME
         if cache_file.exists():
             log.info("Loading document symbols cache from %s", cache_file)
@@ -2490,6 +2582,32 @@ class SolidLanguageServer(ABC):
                     cache_file,
                     e,
                 )
+
+    # ---- Per-file cache helpers ----
+
+    def _load_per_file_raw_entry(self, relative_path: str, version: Any) -> Optional[tuple[str, Any]]:
+        """Load a single raw cache entry from per-file storage."""
+        from solidlsp.util.per_file_cache import load_cache_entry
+
+        return load_cache_entry(self.cache_dir, relative_path, version)
+
+    def _save_per_file_raw_entry(self, relative_path: str, version: Any, entry: tuple[str, Any]) -> None:
+        """Save a single raw cache entry to per-file storage."""
+        from solidlsp.util.per_file_cache import save_cache_entry
+
+        save_cache_entry(self.cache_dir, relative_path, version, entry)
+
+    def _load_per_file_high_level_entry(self, relative_path: str, version: Any) -> Optional[tuple[str, Any]]:
+        """Load a single high-level cache entry from per-file storage."""
+        from solidlsp.util.per_file_cache import load_cache_entry
+
+        return load_cache_entry(self.cache_dir, relative_path, version)
+
+    def _save_per_file_high_level_entry(self, relative_path: str, version: Any, entry: tuple[str, Any]) -> None:
+        """Save a single high-level cache entry to per-file storage."""
+        from solidlsp.util.per_file_cache import save_cache_entry
+
+        save_cache_entry(self.cache_dir, relative_path, version, entry)
 
     def save_cache(self) -> None:
         self._save_raw_document_symbols_cache()

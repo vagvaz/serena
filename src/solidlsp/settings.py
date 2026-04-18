@@ -6,7 +6,7 @@ import logging
 import os
 import pathlib
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from sensai.util.string import ToStringMixin
 
@@ -32,7 +32,17 @@ class SolidLSPSettings:
     """
     Advanced configuration option allowing to configure language server implementation specific options.
     Have a look at the docstring of the constructors of the corresponding LS implementations within solidlsp to see which options are available.
-    No documentation on options means no options are available.
+    No documentation on available options means no options are available.
+    """
+    cache_storage_mode: Literal["monolithic", "per_file"] = "monolithic"
+    """
+    Controls how symbol cache entries are stored on disk.
+
+    - ``"monolithic"`` (default): All entries for a language are stored in a single pickle file
+      (e.g. ``raw_document_symbols.pkl``). This is the legacy format, fully backwards compatible.
+    - ``"per_file"``: Each cache entry is stored as an individual file, sharded by hash prefix.
+      Enables lazy loading, granular saves, and better branch-switching persistence.
+      On first use with ``"per_file"``, existing monolithic caches are automatically migrated.
     """
 
     def __post_init__(self) -> None:
