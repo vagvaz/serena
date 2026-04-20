@@ -2243,3 +2243,134 @@ a:hover {
     scrollbar-width: thin;
     scrollbar-color: var(--border-hover) transparent;
 }
+
+/* ===== Active Projects Section (Overview Page) ===== */
+.active-projects-section {
+    margin-bottom: 24px;
+}
+
+.section-title {
+    font-size: 15px;
+    font-weight: 600;
+    color: var(--text-secondary);
+    margin: 0 0 16px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.section-icon {
+    font-size: 16px;
+}
+
+.projects-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+    gap: 16px;
+}
+
+.project-card {
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: var(--card-radius);
+    padding: 16px;
+    cursor: pointer;
+    transition: all var(--transition-base);
+    box-shadow: var(--shadow-sm);
+}
+
+.project-card:hover {
+    border-color: var(--brand-primary);
+    box-shadow: var(--shadow-md);
+    transform: translateY(-1px);
+}
+
+.project-card.selected {
+    border-color: var(--brand-primary);
+    background: var(--brand-primary-light);
+}
+
+.project-card-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 8px;
+}
+
+.project-card-name {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.project-card-status {
+    font-size: 12px;
+    font-weight: 500;
+    padding: 2px 8px;
+    border-radius: 12px;
+}
+
+.project-card-status.status-running {
+    background: var(--success-light);
+    color: var(--success);
+}
+
+.project-card-status.status-stopped {
+    background: var(--error-light);
+    color: var(--error);
+}
+
+.project-card-path {
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 12px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.project-card-details {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.detail-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 13px;
+}
+
+.detail-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.detail-value {
+    color: var(--text-secondary);
+}
+
+.shared-config-section {
+    margin-top: 24px;
+    padding-top: 16px;
+    border-top: 2px solid var(--border-color);
+}
+
+.tools-section {
+    margin-top: 20px;
+}
+
+/* ===== Session Display Fixes ===== */
+.session-meta {
+    display: flex;
+    flex-direction: row;
+    flex-wrap: wrap;
+    gap: 8px 16px;
+}
+
+.session-meta span {
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+}

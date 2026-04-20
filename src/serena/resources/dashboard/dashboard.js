@@ -53,7 +53,7 @@ class LogMessage {
         };
 
         return convertString.replace(/[<>&"'`]/g, match => patterns[match]);
-    };
+    }
 }
 
 function updateThemeAwareImage($img, theme=null) {
@@ -680,22 +680,14 @@ class Dashboard {
 
             // Get active projects array (new backend format) or fallback to single project
             const activeProjects = config.active_projects || [];
-            const hasMultipleProjects = activeProjects.length > 1;
             
-            // Determine which project to display
-            // If we have multiple projects, use the selected one or default to first
-            // If single project, use the backward compat active_project
+            // Determine which project to display details for
             let selectedProject = null;
-            if (hasMultipleProjects) {
-                // Try to find the currently selected project by name
+            if (activeProjects.length > 0) {
                 const foundProject = activeProjects.find(p => p.name === this.activeProjectName);
                 selectedProject = foundProject || activeProjects[0];
                 this.activeProjectName = selectedProject.name;
-            } else if (activeProjects.length === 1) {
-                selectedProject = activeProjects[0];
-                this.activeProjectName = selectedProject.name;
             } else {
-                // Fallback to backward compat single project
                 selectedProject = config.active_project;
                 this.activeProjectName = config.active_project ? config.active_project.name : null;
             }
@@ -705,132 +697,47 @@ class Dashboard {
             // Version badge
             $('#version-badge').text('v' + config.serena_version);
 
-            // Project Summary Header (shows count of active projects)
+            // Active Projects Cards Section - show ALL active projects
             if (activeProjects.length > 0) {
-                html += '<div class="projects-summary">';
-                html += '<div class="projects-count">';
-                html += '<span class="count-badge">' + activeProjects.length + '</span>';
-                html += '<span class="count-label">Active Project' + (activeProjects.length > 1 ? 's' : '') + '</span>';
-                html += '</div>';
-                html += '<div class="projects-names">';
-                activeProjects.forEach(function (project, index) {
-                    if (index > 0) html += '<span class="names-separator">•</span>';
-                    const isSelected = project.name === (selectedProject && selectedProject.name);
-                    html += '<span class="project-name-tag' + (isSelected ? ' selected' : '') + '" title="' + project.path + '">' + project.name + '</span>';
-                });
-                html += '</div>';
-                html += '</div>';
-            }
-
-            // Project Selector Tabs (only if multiple projects)
-            if (hasMultipleProjects) {
-                html += '<div class="project-tabs">';
+                html += '<div class="active-projects-section">';
+                html += '<h3 class="section-title"><span class="section-icon">📂</span> Active Projects (' + activeProjects.length + ')</h3>';
+                html += '<div class="projects-grid">';
                 activeProjects.forEach(function (project) {
                     const isSelected = project.name === (selectedProject && selectedProject.name);
-                    const lspIndicator = project.lsp_running ? '<span class="lsp-indicator running" title="LSP Running"></span>' : '<span class="lsp-indicator stopped" title="LSP Stopped"></span>';
-                    html += '<button class="project-tab' + (isSelected ? ' active' : '') + '" data-project-name="' + project.name + '">';
-                    html += lspIndicator;
-                    html += '<span class="tab-name">' + project.name + '</span>';
-                    html += '</button>';
-                });
-                html += '</div>';
-            }
+                    const lspStatus = project.lsp_running ? 'Running' : 'Stopped';
+                    const lspClass = project.lsp_running ? 'status-running' : 'status-stopped';
+                    const idleText = project.idle_seconds !== null && project.idle_seconds !== undefined
+                        ? self.formatIdleTime(project.idle_seconds)
+                        : 'Active now';
+                    const languagesDisplay = project.languages
+                        ? (Array.isArray(project.languages) ? project.languages.join(', ') : project.languages)
+                        : 'N/A';
 
-            // Selected Project Configuration
-            html += '<div class="config-grid">';
-
-            // Selected Project info
-            html += '<div class="config-label">Selected Project</div>';
-            if (selectedProject && selectedProject.name && selectedProject.path) {
-                const configPath = selectedProject.path + '/.serena/project.yml';
-                let projectDisplay = '<div class="config-value project-value">';
-                projectDisplay += '<span class="project-name-main" title="Project configuration in ' + configPath + '">' + selectedProject.name + '</span>';
-                if (selectedProject.read_only) {
-                    projectDisplay += '<span class="read-only-badge">Read-Only</span>';
-                }
-                projectDisplay += '</div>';
-                html += projectDisplay;
-            } else {
-                html += '<div class="config-value">' + ((selectedProject && selectedProject.name) || 'None') + '</div>';
-            }
-
-            // Languages (per-project)
-            html += '<div class="config-label">Languages</div>';
-            if (this.jetbrainsMode) {
-                html += '<div class="config-value">Using JetBrains backend</div>';
-            } else {
-                html += '<div class="config-value">';
-                const rawLanguages = selectedProject && selectedProject.languages ? selectedProject.languages : config.languages;
-                const projectLanguages = Array.isArray(rawLanguages) ? rawLanguages : (rawLanguages ? rawLanguages.split(', ') : []);
-                if (projectLanguages.length > 0) {
-                    html += '<div class="languages-container">';
-                    projectLanguages.forEach(function (language, index) {
-                        const isRemovable = projectLanguages.length > 1;
-                        html += '<div class="language-badge' + (isRemovable ? ' removable' : '') + '">';
-                        html += language;
-                        if (isRemovable) {
-                            html += '<span class="language-remove" data-language="' + language + '">&times;</span>';
-                        }
-                        html += '</div>';
-                    });
-                    if (selectedProject && selectedProject.name) {
-                        if (this.isAddingLanguage) {
-                            html += '<div id="add-language-spinner" class="language-spinner"><div class="spinner"></div></div>';
-                        } else {
-                            html += '<button id="add-language-btn" class="language-add-btn">+ Add</button>';
-                            html += '<div id="add-language-spinner" class="language-spinner" style="display:none;"><div class="spinner"></div></div>';
-                        }
+                    html += '<div class="project-card' + (isSelected ? ' selected' : '') + '" data-project-name="' + project.name + '">';
+                    html += '<div class="project-card-header">';
+                    html += '<div class="project-card-name" title="' + self.escapeHtml(project.name) + '">' + self.escapeHtml(project.name) + '</div>';
+                    html += '<div class="project-card-status ' + lspClass + '">' + lspStatus + '</div>';
+                    html += '</div>';
+                    html += '<div class="project-card-path" title="' + self.escapeHtml(project.path || '') + '">' + self.escapeHtml(project.path || 'N/A') + '</div>';
+                    html += '<div class="project-card-details">';
+                    html += '<div class="detail-row"><span class="detail-label">Languages</span><span class="detail-value">' + self.escapeHtml(languagesDisplay) + '</span></div>';
+                    html += '<div class="detail-row"><span class="detail-label">Last Active</span><span class="detail-value">' + idleText + '</span></div>';
+                    html += '<div class="detail-row"><span class="detail-label">Encoding</span><span class="detail-value">' + self.escapeHtml(project.encoding || 'N/A') + '</span></div>';
+                    if (project.read_only) {
+                        html += '<div class="detail-row"><span class="read-only-badge">Read-Only</span></div>';
                     }
                     html += '</div>';
-                } else {
-                    html += 'N/A';
-                }
-                html += '</div>';
-            }
-
-            // LSP Status (per-project)
-            if (selectedProject && selectedProject.lsp_running !== undefined) {
-                html += '<div class="config-label">LSP Status</div>';
-                const lspStatus = selectedProject.lsp_running ? 'Running' : 'Stopped';
-                const lspStatusClass = selectedProject.lsp_running ? 'status-running' : 'status-stopped';
-                html += '<div class="config-value"><span class="lsp-status-badge ' + lspStatusClass + '">' + lspStatus + '</span></div>';
-            }
-
-            // File Encoding (per-project)
-            html += '<div class="config-label">File Encoding</div>';
-            const projectEncoding = selectedProject && selectedProject.encoding ? selectedProject.encoding : config.encoding;
-            html += '<div class="config-value">' + (projectEncoding || 'N/A') + '</div>';
-
-            html += '</div>';
-
-            // Available memories - collapsible (per-project)
-            if (selectedProject && selectedProject.name) {
-                const projectMemories = selectedProject.memories || config.available_memories || [];
-                html += '<div style="margin-top: 10px;">';
-                html += '<h3 class="collapsible-header" id="memories-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
-                const memoryCount = projectMemories.length;
-                html += '<span style="font-weight: 600; color: var(--text-secondary);">Available Memories (' + memoryCount + ')</span>';
-                html += '<span class="toggle-icon' + (wasMemoriesExpanded ? ' expanded' : '') + '">';
-                html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-                html += '</span>';
-                html += '</h3>';
-                html += '<div class="collapsible-content memories-container" id="memories-content" style="' + (wasMemoriesExpanded ? '' : 'display:none;') + ' margin-top: 10px; padding-bottom: 10px;">';
-                if (projectMemories.length > 0) {
-                    projectMemories.forEach(function (memory) {
-                        html += '<div class="memory-item removable" data-memory="' + memory + '">';
-                        html += memory;
-                        html += '<span class="memory-remove" data-memory="' + memory + '">&times;</span>';
-                        html += '</div>';
-                    });
-                }
-                html += '<button id="create-memory-btn" class="memory-add-btn">+ Add Memory</button>';
+                    html += '</div>';
+                });
                 html += '</div>';
                 html += '</div>';
+            } else {
+                html += '<div class="empty-state-box"><span class="empty-icon large">📂</span><h3>No Active Projects</h3><p>Activate a project from your MCP client to see it here.</p></div>';
             }
 
             // Shared Configuration Section
-            html += '<div style="margin-top: 20px; padding-top: 16px; border-top: 2px solid var(--border-color);">';
-            html += '<h3 style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 0 0 16px 0; text-transform: uppercase; letter-spacing: 0.5px;">Shared Configuration</h3>';
+            html += '<div class="shared-config-section">';
+            html += '<h3 class="section-title"><span class="section-icon">⚙️</span> Shared Configuration</h3>';
             html += '<div class="config-grid">';
 
             // Context info (shared)
@@ -854,7 +761,7 @@ class Dashboard {
             html += '</div>';
 
             // Active tools - collapsible (shared)
-            html += '<div style="margin-top: 20px;">';
+            html += '<div class="tools-section">';
             html += '<h3 class="collapsible-header" id="tools-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
             html += '<span style="font-weight: 600; color: var(--text-secondary);">Active Tools (' + config.active_tools.length + ')</span>';
             html += '<span class="toggle-icon' + (wasToolsExpanded ? ' expanded' : '') + '">';
@@ -882,50 +789,18 @@ class Dashboard {
             // Attach event handlers
             const self = this;
             
-            // Project tab click handlers
-            $('.project-tab').click(function () {
+            // Project card click handlers - set as selected for detail view
+            $('.project-card').click(function () {
                 const projectName = $(this).data('project-name');
                 self.activeProjectName = projectName;
-                // Re-render to show selected project
                 self.displayConfig(self.configData);
             });
 
-            $('#add-language-btn').click(this.openLanguageModal.bind(this));
             $('#edit-serena-config-btn').click(this.openEditSerenaConfigModal.bind(this));
-            
-            $('.language-remove').click(function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                const language = $(this).data('language');
-                self.confirmRemoveLanguage(language);
-            });
-
-            $('.memory-item').click(function (e) {
-                e.preventDefault();
-                const memoryName = $(this).data('memory');
-                self.openEditMemoryModal(memoryName);
-            });
-
-            $('.memory-remove').click(function (e) {
-                e.preventDefault();
-                e.stopPropagation();
-                const memoryName = $(this).data('memory');
-                self.confirmDeleteMemory(memoryName);
-            });
-
-            $('#create-memory-btn').click(this.openCreateMemoryModal.bind(this));
 
             $('#tools-header').click(function () {
                 const $header = $(this);
                 const $content = $('#tools-content');
-                const $icon = $header.find('.toggle-icon');
-                $content.slideToggle(200);
-                $icon.toggleClass('expanded');
-            });
-
-            $('#memories-header').click(function () {
-                const $header = $(this);
-                const $content = $('#memories-content');
                 const $icon = $header.find('.toggle-icon');
                 $content.slideToggle(200);
                 $icon.toggleClass('expanded');
@@ -1222,14 +1097,17 @@ class Dashboard {
         const self = this;
         if (this.waitingForExecutionsPollingResult) {
             console.log('Still waiting for previous executions poll result, skipping this poll');
+            return;
         }
-        else {
-            this.waitingForExecutionsPollingResult = true;
-            console.log('Polling for executions...');
-            this.loadQueuedExecutions();
-            this.loadLastExecution();
-            this.waitingForExecutionsPollingResult = false;
-        }
+        this.waitingForExecutionsPollingResult = true;
+        console.log('Polling for executions...');
+        const self = this;
+        Promise.all([
+            new Promise(resolve => { self.loadQueuedExecutions(); resolve(); }),
+            new Promise(resolve => { self.loadLastExecution(); resolve(); })
+        ]).finally(() => {
+            self.waitingForExecutionsPollingResult = false;
+        });
     }
 
     displayActiveExecutionsQueue(executions) {
@@ -1459,7 +1337,8 @@ class Dashboard {
     }
 
     updateTitle(activeProject) {
-        document.title = activeProject ? `${activeProject} – Serena Dashboard` : 'Serena Dashboard';
+        const projectName = typeof activeProject === 'object' && activeProject !== null ? activeProject.name : activeProject;
+        document.title = projectName ? `${projectName} – Serena Dashboard` : 'Serena Dashboard';
     }
 
     updateLogButtons(hasLogs) {

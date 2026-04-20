@@ -245,7 +245,13 @@ class SessionManager:
                 if s.project_name == project_name and s.is_active
             )
 
-    def to_dict_list(self) -> list[dict[str, Any]]:
-        """Serialize all sessions for API/dashboard consumption."""
+    def to_dict_list(self, active_only: bool = True) -> list[dict[str, Any]]:
+        """Serialize sessions for API/dashboard consumption.
+
+        :param active_only: If True (default), only return active sessions.
+        """
         with self._lock:
-            return [s.to_dict() for s in self._sessions.values()]
+            sessions = self._sessions.values()
+            if active_only:
+                sessions = [s for s in sessions if s.is_active]
+            return [s.to_dict() for s in sessions]
