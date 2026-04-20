@@ -330,8 +330,6 @@ class Dashboard {
         this.$clearStats = $('#clear-stats');
         this.$projectsDisplay = $('#projects-display');
         this.$projectsHeader = $('#projects-header');
-        this.$sessionsHeader = $('#sessions-header');
-        this.$sessionsDisplay = $('#sessions-display');
         this.$availableToolsDisplay = $('#available-tools-display');
         this.$availableModesDisplay = $('#available-modes-display');
         this.$availableContextsDisplay = $('#available-contexts-display');
@@ -607,7 +605,7 @@ class Dashboard {
                     self.activeSessions = response.active_sessions || [];
                     self.updateLogFilterOptions(response);
 
-                    // Set active project name - prefer new active_projects array, fallback to backward compat
+                    // Set active project name from active_projects array
                     const activeProjects = response.active_projects || [];
                     if (activeProjects.length > 0) {
                         // If we already have an active project name and it exists in the list, keep it
@@ -617,8 +615,7 @@ class Dashboard {
                             self.activeProjectName = activeProjects[0].name;
                         }
                     } else {
-                        // Fallback to backward compat single project
-                        self.activeProjectName = response.active_project ? response.active_project.name : null;
+                        self.activeProjectName = null;
                     }
                     
                     if (self.currentPage === 'overview') {
@@ -628,7 +625,6 @@ class Dashboard {
                         self.displayAvailableTools(response.available_tools);
                         self.displayAvailableModes(response.available_modes);
                         self.displayAvailableContexts(response.available_contexts);
-                        self.displaySessions(self.activeSessions);
                     }
                     if (self.currentPage === 'active-projects') {
                         self.displayActiveProjects(response.active_projects || []);
@@ -681,6 +677,22 @@ class Dashboard {
 
             // Get active projects array (new backend format) or fallback to single project
             const activeProjects = config.active_projects || [];
+            const activeSessions = config.active_sessions || [];
+            
+            // Group sessions by project_name
+            const sessionsByProject = {};
+            const unboundSessions = [];
+            activeSessions.forEach(function (session) {
+                const projName = session.project_name || '';
+                if (projName) {
+                    if (!sessionsByProject[projName]) {
+                        sessionsByProject[projName] = [];
+                    }
+                    sessionsByProject[projName].push(session);
+                } else {
+                    unboundSessions.push(session);
+                }
+            });
             
             // Determine which project to display details for
             let selectedProject = null;
@@ -688,9 +700,6 @@ class Dashboard {
                 const foundProject = activeProjects.find(p => p.name === this.activeProjectName);
                 selectedProject = foundProject || activeProjects[0];
                 this.activeProjectName = selectedProject.name;
-            } else {
-                selectedProject = config.active_project;
-                this.activeProjectName = config.active_project ? config.active_project.name : null;
             }
 
             let html = '';
@@ -698,7 +707,7 @@ class Dashboard {
             // Version badge
             $('#version-badge').text('v' + config.serena_version);
 
-            // Active Projects Cards Section - show ALL active projects
+            // Active Projects Cards Section - show ALL active projects with their sessions
             if (activeProjects.length > 0) {
                 html += '<div class="active-projects-section">';
                 html += '<h3 class="section-title"><span class="section-icon">📂</span> Active Projects (' + activeProjects.length + ')</h3>';
@@ -713,6 +722,8 @@ class Dashboard {
                     const languagesDisplay = project.languages
                         ? (Array.isArray(project.languages) ? project.languages.join(', ') : project.languages)
                         : 'N/A';
+                    const projectSessions = sessionsByProject[project.name] || [];
+                    const sessionCount = projectSessions.length;
 
                     html += '<div class="project-card' + (isSelected ? ' selected' : '') + '" data-project-name="' + project.name + '">';
                     html += '<div class="project-card-header">';
@@ -728,12 +739,42 @@ class Dashboard {
                         html += '<div class="detail-row"><span class="read-only-badge">Read-Only</span></div>';
                     }
                     html += '</div>';
+
+                    // Sessions for this project
+                    if (sessionCount > 0) {
+                        html += '<div class="project-sessions">';
+                        html += '<div class="project-sessions-title">🧑‍💻 Sessions <span class="session-count-badge">' + sessionCount + '</span></div>';
+                        projectSessions.forEach(function (session) {
+                            html += self._renderSessionInline(session);
+                        });
+                        html += '</div>';
+                    }
+
                     html += '</div>';
                 });
                 html += '</div>';
                 html += '</div>';
+
+                // Unbound sessions (no project)
+                if (unboundSessions.length > 0) {
+                    html += '<div class="unbound-sessions-section">';
+                    html += '<div class="unbound-sessions-title">🧑‍💻 Unbound Sessions <span class="session-count-badge">' + unboundSessions.length + '</span></div>';
+                    unboundSessions.forEach(function (session) {
+                        html += self._renderSessionInline(session);
+                    });
+                    html += '</div>';
+                }
             } else {
                 html += '<div class="empty-state-box"><span class="empty-icon large">📂</span><h3>No Active Projects</h3><p>Activate a project from your MCP client to see it here.</p></div>';
+                // Still show unbound sessions if any
+                if (unboundSessions.length > 0) {
+                    html += '<div class="unbound-sessions-section">';
+                    html += '<div class="unbound-sessions-title">🧑‍💻 Unbound Sessions <span class="session-count-badge">' + unboundSessions.length + '</span></div>';
+                    unboundSessions.forEach(function (session) {
+                        html += self._renderSessionInline(session);
+                    });
+                    html += '</div>';
+                }
             }
 
             // Shared Configuration Section
@@ -900,40 +941,42 @@ class Dashboard {
         this.logFilters.sessionId = this.$logSessionFilter.val() || '';
     }
 
-    displaySessions(sessions) {
-        if (!this.$sessionsDisplay || this.$sessionsDisplay.length === 0) return;
-        if (!sessions || sessions.length === 0) {
-            this.$sessionsDisplay.html('<div class="empty-state small"><span class="empty-text">No active sessions</span></div>');
-            return;
+    /**
+     * Render a single session as an inline row for use inside project cards.
+     */
+    _renderSessionInline(session) {
+        const shortId = this.truncateSessionId(session.session_id || '');
+        const idle = this.formatIdleTime(session.idle_seconds || 0);
+        const client = session.client_info || 'Unknown';
+        const tags = [];
+        if (session.context_name) tags.push(session.context_name);
+        if (session.persona_name) tags.push(session.persona_name);
+        if (session.backend_hint) tags.push(session.backend_hint);
+
+        let html = '<div class="project-session-item">';
+        html += '<span class="session-id-short" title="' + this.escapeHtml(session.session_id || '') + '">' + this.escapeHtml(shortId) + '</span>';
+        html += '<span class="session-detail">' + this.escapeHtml(idle) + ' idle</span>';
+        if (client && client !== 'Unknown') {
+            html += '<span class="session-detail">' + this.escapeHtml(client) + '</span>';
         }
-
-        let html = '<div class="session-list">';
-        sessions.forEach(session => {
-            const projectName = session.project_name || 'Unbound';
-            const idle = this.formatIdleTime(session.idle_seconds || 0);
-            const client = session.client_info || 'Unknown client';
-            const tags = [];
-            if (session.context_name) tags.push(`context: ${session.context_name}`);
-            if (session.persona_name) tags.push(`persona: ${session.persona_name}`);
-            if (session.backend_hint) tags.push(`backend: ${session.backend_hint}`);
-
-            html += '<div class="session-item">';
-            html += `<div class="session-id" title="${this.escapeHtml(session.session_id)}">${this.escapeHtml(session.session_id)}</div>`;
-            html += '<div class="session-meta">';
-            html += `<span>Project: ${this.escapeHtml(projectName)}</span>`;
-            html += `<span>Idle: ${this.escapeHtml(idle)}</span>`;
-            html += `<span>Client: ${this.escapeHtml(client)}</span>`;
-            html += '</div>';
-            if (tags.length > 0) {
-                html += '<div class="session-tags">'
-                    + tags.map(tag => `<span class="session-tag">${this.escapeHtml(tag)}</span>`).join('')
-                    + '</div>';
-            }
-            html += '</div>';
-        });
+        if (tags.length > 0) {
+            html += '<span class="session-tags-inline">';
+            tags.forEach(function (tag) {
+                html += '<span class="session-tag-inline">' + this.escapeHtml(tag) + '</span>';
+            }.bind(this));
+            html += '</span>';
+        }
         html += '</div>';
+        return html;
+    }
 
-        this.$sessionsDisplay.html(html);
+    /**
+     * Truncate a session ID for display, showing first 8 chars with full ID in tooltip.
+     */
+    truncateSessionId(id) {
+        if (!id) return '—';
+        if (id.length <= 12) return id;
+        return id.substring(0, 8) + '…';
     }
 
     // ===== Active Projects Methods =====
@@ -944,6 +987,7 @@ class Dashboard {
             url: '/get_config_overview',
             type: 'GET',
             success: function (response) {
+                self.activeSessions = response.active_sessions || [];
                 self.displayActiveProjects(response.active_projects || []);
             },
             error: function (xhr, status, error) {
@@ -967,6 +1011,22 @@ class Dashboard {
             return;
         }
 
+        // Group sessions by project
+        const sessionsByProject = {};
+        const unboundSessions = [];
+        const activeSessions = this.activeSessions || [];
+        activeSessions.forEach(function (session) {
+            const projName = session.project_name || '';
+            if (projName) {
+                if (!sessionsByProject[projName]) {
+                    sessionsByProject[projName] = [];
+                }
+                sessionsByProject[projName].push(session);
+            } else {
+                unboundSessions.push(session);
+            }
+        });
+
         let html = '';
         const self = this;
 
@@ -977,6 +1037,8 @@ class Dashboard {
             const idleText = project.idle_seconds !== null && project.idle_seconds !== undefined
                 ? self.formatIdleTime(project.idle_seconds)
                 : 'Active now';
+            const projectSessions = sessionsByProject[project.name] || [];
+            const sessionCount = projectSessions.length;
 
             html += '<div class="active-project-card' + cardClass + '">';
             html += '<div class="active-project-header">';
@@ -991,8 +1053,29 @@ class Dashboard {
             html += '<div class="detail-row"><span class="detail-label">Languages</span><span class="detail-value">' + self.escapeHtml(languagesDisplay) + '</span></div>';
             html += '<div class="detail-row"><span class="detail-label">Last Active</span><span class="detail-value">' + idleText + '</span></div>';
             html += '</div>';
+
+            // Sessions for this project
+            if (sessionCount > 0) {
+                html += '<div class="project-sessions">';
+                html += '<div class="project-sessions-title">🧑‍💻 Sessions <span class="session-count-badge">' + sessionCount + '</span></div>';
+                projectSessions.forEach(function (session) {
+                    html += self._renderSessionInline(session);
+                });
+                html += '</div>';
+            }
+
             html += '</div>';
         });
+
+        // Unbound sessions
+        if (unboundSessions.length > 0) {
+            html += '<div class="unbound-sessions-section">';
+            html += '<div class="unbound-sessions-title">🧑‍💻 Unbound Sessions <span class="session-count-badge">' + unboundSessions.length + '</span></div>';
+            unboundSessions.forEach(function (session) {
+                html += self._renderSessionInline(session);
+            });
+            html += '</div>';
+        }
 
         $container.html(html);
     }
@@ -1335,8 +1418,7 @@ class Dashboard {
         });
     }
 
-    updateTitle(activeProject) {
-        const projectName = typeof activeProject === 'object' && activeProject !== null ? activeProject.name : activeProject;
+    updateTitle(projectName) {
         document.title = projectName ? `${projectName} – Serena Dashboard` : 'Serena Dashboard';
     }
 
@@ -1434,7 +1516,7 @@ class Dashboard {
                 }
 
                 self.updateLogButtons(response.messages && response.messages.length > 0);
-                self.updateTitle(response.active_project);
+                self.updateTitle(self.activeProjectName);
                 self.startPeriodicPolling();
             },
             error: function (xhr, status, error) {
@@ -1475,7 +1557,7 @@ class Dashboard {
                     self.currentMaxIdx = response.max_idx || self.currentMaxIdx;
                 }
 
-                self.updateTitle(response.active_project);
+                self.updateTitle(self.activeProjectName);
             }
         });
     }
@@ -1811,8 +1893,7 @@ class Dashboard {
         
         const activeProjects = this.configData.active_projects || [];
         if (activeProjects.length === 0) {
-            // Fallback to backward compat
-            return this.configData.active_project;
+            return null;
         }
         
         // Find the project matching the active project name
@@ -1828,8 +1909,9 @@ class Dashboard {
 
     loadAvailableLanguages() {
         let self = this;
+        const projectParam = this.activeProjectName ? '?project=' + encodeURIComponent(this.activeProjectName) : '';
         $.ajax({
-            url: '/get_available_languages',
+            url: '/get_available_languages' + projectParam,
             type: 'GET',
             success: function (response) {
                 const languages = response.languages || [];
@@ -1906,7 +1988,7 @@ class Dashboard {
             url: '/get_memory',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ memory_name: memoryName }),
+            data: JSON.stringify({ memory_name: memoryName, project_name: this.activeProjectName }),
             success: function (response) {
                 if (response.status === 'error') {
                     alert('Error: ' + response.message);
@@ -1958,7 +2040,7 @@ class Dashboard {
             url: '/save_memory',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ memory_name: memoryName, content: content }),
+            data: JSON.stringify({ memory_name: memoryName, content: content, project_name: this.activeProjectName }),
             success: function (response) {
                 if (response.status === 'success') {
                     self.originalMemoryContent = content;
@@ -2013,7 +2095,7 @@ class Dashboard {
             url: '/rename_memory',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ old_name: oldName, new_name: newName }),
+            data: JSON.stringify({ old_name: oldName, new_name: newName, project_name: this.activeProjectName }),
             success: function (response) {
                 if (response.status === 'success') {
                     self.currentMemoryName = newName;
@@ -2061,7 +2143,7 @@ class Dashboard {
             url: '/delete_memory',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ memory_name: memoryName }),
+            data: JSON.stringify({ memory_name: memoryName, project_name: this.activeProjectName }),
             success: function (response) {
                 if (response.status === 'success') {
                     self.loadConfigOverview();
@@ -2115,7 +2197,7 @@ class Dashboard {
             url: '/save_memory',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ memory_name: memoryName, content: '' }),
+            data: JSON.stringify({ memory_name: memoryName, content: '', project_name: this.activeProjectName }),
             success: function (response) {
                 if (response.status === 'success') {
                     self.closeCreateMemoryModal();

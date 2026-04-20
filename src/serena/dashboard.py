@@ -59,7 +59,6 @@ class ResponseToolStats(BaseModel):
 
 
 class ResponseConfigOverview(BaseModel):
-    active_project: dict[str, str | None]
     active_projects: list[dict[str, Any]]
     active_sessions: list[dict[str, Any]]
     context: dict[str, str]
@@ -92,6 +91,7 @@ class RequestRemoveLanguage(BaseModel):
 
 class RequestGetMemory(BaseModel):
     memory_name: str
+    project_name: str | None = None
 
 
 class ResponseGetMemory(BaseModel):
@@ -102,15 +102,18 @@ class ResponseGetMemory(BaseModel):
 class RequestSaveMemory(BaseModel):
     memory_name: str
     content: str
+    project_name: str | None = None
 
 
 class RequestDeleteMemory(BaseModel):
     memory_name: str
+    project_name: str | None = None
 
 
 class RequestRenameMemory(BaseModel):
     old_name: str
     new_name: str
+    project_name: str | None = None
 
 
 class ResponseGetSerenaConfig(BaseModel):
@@ -298,7 +301,8 @@ class SerenaDashboardAPI:
 
         @self._app.route("/get_available_languages", methods=["GET"])
         def get_available_languages() -> dict[str, Any]:
-            result = self._get_available_languages()
+            project_name = request.args.get("project")
+            result = self._get_available_languages(project_name)
             return result.model_dump()
 
         @self._app.route("/add_language", methods=["POST"])
@@ -491,8 +495,10 @@ class SerenaDashboardAPI:
                 continue
             filtered.append(entry)
 
-        project = self._agent.get_active_project()
-        project_name = project.project_name if project else None
+        # Use first active project for backward-compat active_project field
+        all_active = self._agent.get_all_active_projects()
+        first_project = next(iter(all_active.values())) if all_active else None
+        project_name = first_project.project_name if first_project else None
         serialized = [self._serialize_log_entry(entry) for entry in filtered]
         return ResponseLog(messages=serialized, max_idx=messages.max_idx, active_project=project_name)
 
@@ -508,6 +514,17 @@ class SerenaDashboardAPI:
     def _clear_tool_stats(self) -> None:
         if self._tool_usage_stats is not None:
             self._tool_usage_stats.clear()
+
+    def _resolve_project(self, project_name: str | None = None):
+        """Resolve a project for dashboard operations.
+
+        :param project_name: explicit project name from the client, or None to use the first active project.
+        :return: the resolved Project, or None if no project is active.
+        """
+        if project_name:
+            return self._agent.get_active_project_by_name(project_name)
+        # Default to first active project for dashboard display purposes
+        return self._agent.get_active_project()
 
     def _get_config_overview(self) -> ResponseConfigOverview:
         import time
@@ -545,14 +562,8 @@ class SerenaDashboardAPI:
                 }
             )
 
-        # Get first active project info (backward compat)
-        project = self._agent.get_active_project()
-        active_project_name = project.project_name if project else None
-        project_info = {
-            "name": active_project_name,
-            "language": ", ".join([l.value for l in project.project_config.languages]) if project else None,
-            "path": str(project.project_root) if project else None,
-        }
+        # Use first active project for backward-compat fields (languages, encoding, memories)
+        first_project = next(iter(all_active.values())) if all_active else None
 
         # Get context info
         context = self._agent.get_context()
@@ -639,24 +650,23 @@ class SerenaDashboardAPI:
 
         # Get available memories if ReadMemoryTool is active
         available_memories = None
-        if self._agent.tool_is_active("read_memory") and project is not None:
-            available_memories = project.memories_manager.list_memories().get_full_list()
+        if self._agent.tool_is_active("read_memory") and first_project is not None:
+            available_memories = first_project.memories_manager.list_memories().get_full_list()
 
-        # Get list of languages for the active project
+        # Get list of languages for the first active project
         languages = []
-        if project is not None:
-            languages = [lang.value for lang in project.project_config.languages]
+        if first_project is not None:
+            languages = [lang.value for lang in first_project.project_config.languages]
 
-        # Get file encoding for the active project
+        # Get file encoding for the first active project
         encoding = None
-        if project is not None:
-            encoding = project.project_config.encoding
+        if first_project is not None:
+            encoding = first_project.project_config.encoding
 
         # Get active sessions
         active_sessions = self._agent.get_session_manager().to_dict_list()
 
         return ResponseConfigOverview(
-            active_project=project_info,
             active_projects=active_projects_info,
             active_sessions=active_sessions,
             context=context_info,
@@ -675,14 +685,14 @@ class SerenaDashboardAPI:
             serena_version=self._agent.version,
         )
 
-    def _get_available_languages(self) -> ResponseAvailableLanguages:
+    def _get_available_languages(self, project_name: str | None = None) -> ResponseAvailableLanguages:
         from solidlsp.ls_config import Language
 
         def run() -> ResponseAvailableLanguages:
             all_languages = [lang.value for lang in Language.iter_all(include_experimental=True)]
 
-            # Filter out already added languages for the active project
-            project = self._agent.get_active_project()
+            # Filter out already added languages for the specified project (or first active)
+            project = self._resolve_project(project_name)
             if project:
                 current_languages = [lang.value for lang in project.project_config.languages]
                 available_languages = [lang for lang in all_languages if lang not in current_languages]
@@ -695,7 +705,7 @@ class SerenaDashboardAPI:
 
     def _get_memory(self, request_get_memory: RequestGetMemory) -> ResponseGetMemory:
         def run() -> ResponseGetMemory:
-            project = self._agent.get_active_project()
+            project = self._resolve_project(request_get_memory.project_name)
             if project is None:
                 raise ValueError("No active project")
 
@@ -706,7 +716,7 @@ class SerenaDashboardAPI:
 
     def _save_memory(self, request_save_memory: RequestSaveMemory) -> None:
         def run() -> None:
-            project = self._agent.get_active_project()
+            project = self._resolve_project(request_save_memory.project_name)
             if project is None:
                 raise ValueError("No active project")
             project.memories_manager.save_memory(request_save_memory.memory_name, request_save_memory.content, is_tool_context=False)
@@ -715,7 +725,7 @@ class SerenaDashboardAPI:
 
     def _delete_memory(self, request_delete_memory: RequestDeleteMemory) -> None:
         def run() -> None:
-            project = self._agent.get_active_project()
+            project = self._resolve_project(request_delete_memory.project_name)
             if project is None:
                 raise ValueError("No active project")
             project.memories_manager.delete_memory(request_delete_memory.memory_name, is_tool_context=False)
@@ -724,7 +734,7 @@ class SerenaDashboardAPI:
 
     def _rename_memory(self, request_rename_memory: RequestRenameMemory) -> str:
         def run() -> str:
-            project = self._agent.get_active_project()
+            project = self._resolve_project(request_rename_memory.project_name)
             if project is None:
                 raise ValueError("No active project")
 
