@@ -3,10 +3,11 @@ The Serena Model Context Protocol (MCP) Server
 """
 
 import sys
+import uuid
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
 import docstring_parser
@@ -49,7 +50,7 @@ class SerenaMCPRequestContext:
 
 @dataclass
 class SerenaConnectionContext:
-    session_id: str | None = None
+    session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:12])
     client_info: str | None = None
 
 

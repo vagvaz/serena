@@ -360,18 +360,12 @@ class Tool(Component):
                     if client_str != self.get_last_tool_call_client_str():
                         log.debug(f"Updating client info: {client_info}")
                         self.set_last_tool_call_client_str(client_str)
-                    # Extract session ID
-                    session_id = getattr(mcp_ctx.session, "id", None) or getattr(mcp_ctx.session, "session_id", None)
-                    try:
-                        lifespan_ctx = getattr(mcp_ctx.request_context, "lifespan_context", None)
-                        if lifespan_ctx is not None:
-                            if session_id and getattr(lifespan_ctx, "session_id", None) is None:
-                                lifespan_ctx.session_id = session_id
-                            if client_str and getattr(lifespan_ctx, "client_info", None) != client_str:
-                                lifespan_ctx.client_info = client_str
-                    except AttributeError:
-                        # Older fastmcp versions may not expose request_context; ignore gracefully
-                        pass
+                    # Extract session ID from lifespan context (set by MCP server lifespan)
+                    lifespan_ctx = getattr(mcp_ctx.request_context, "lifespan_context", None)
+                    if lifespan_ctx is not None:
+                        session_id = getattr(lifespan_ctx, "session_id", None)
+                        if client_str and getattr(lifespan_ctx, "client_info", None) != client_str:
+                            lifespan_ctx.client_info = client_str
             except BaseException as e:
                 log.info(f"Failed to get client info: {e}.")
 
