@@ -291,6 +291,11 @@ class SerenaDashboardAPI:
             self._agent.shutdown()
             return {"status": "shutting down"}
 
+        @self._app.route("/restart_dashboard", methods=["POST"])
+        def restart_dashboard() -> dict[str, str]:
+            result = self._agent.execute_task(self._agent.restart_dashboard, logged=False)
+            return {"status": "success", "message": result}
+
         @self._app.route("/get_available_languages", methods=["GET"])
         def get_available_languages() -> dict[str, Any]:
             result = self._get_available_languages()

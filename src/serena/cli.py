@@ -526,6 +526,51 @@ class TopLevelCommands(AutoRegisteringGroup):
             pass
         click.echo("Serena daemon stopped.")
 
+    @staticmethod
+    @click.command("restart-dashboard", help="Restart the Serena web dashboard without stopping the daemon.")
+    def restart_dashboard() -> None:
+        """Restart the web dashboard via the running daemon's API."""
+        import json
+        import urllib.error
+        import urllib.request
+
+        pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
+        if not os.path.exists(pid_file):
+            click.echo("Serena daemon is not running (no PID file found).")
+            return
+
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            click.echo(f"Stale PID file found (PID {pid}). Daemon is not running.")
+            os.remove(pid_file)
+            return
+
+        # Try the default dashboard port, then common fallbacks
+        ports_to_try = [24282, 24283, 24284, 24285]
+        for port in ports_to_try:
+            url = f"http://127.0.0.1:{port}/restart_dashboard"
+            try:
+                req = urllib.request.Request(url, method="POST", data=b"")
+                req.add_header("Content-Type", "application/json")
+                with urllib.request.urlopen(req, timeout=5) as resp:
+                    result = json.loads(resp.read().decode())
+                    if result.get("status") == "success":
+                        click.echo(result.get("message", "Dashboard restarted."))
+                        return
+                    else:
+                        click.echo(f"Error: {result.get('message', 'Unknown error')}")
+                        return
+            except urllib.error.URLError:
+                continue
+            except Exception:
+                continue
+
+        click.echo("Could not reach the dashboard API. Is the dashboard enabled in your config?")
+
 
 def _start_daemon(
     port: int,
