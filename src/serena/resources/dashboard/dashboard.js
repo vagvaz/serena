@@ -673,6 +673,7 @@ class Dashboard {
 
     displayConfig(config) {
         try {
+            const self = this;
             const $existingToolsContent = $('#tools-content');
             const $existingMemoriesContent = $('#memories-content');
             const wasToolsExpanded = $existingToolsContent.is(':visible');
