@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Literal
 
 from serena import constants
-from serena.util.logging import MemoryLogHandler
+from serena.util.logging import LogEntry, MemoryLogHandler
 
 log = logging.getLogger(__name__)
 
@@ -70,9 +70,9 @@ class GuiLogViewer:
         }
 
         if memory_log_handler is not None:
-            for msg in memory_log_handler.get_log_messages().messages:
-                self.message_queue.put(msg)
-            memory_log_handler.add_emit_callback(lambda msg: self.message_queue.put(msg))
+            for entry in memory_log_handler.get_log_messages().messages:
+                self.message_queue.put(self._format_entry(entry))
+            memory_log_handler.add_emit_callback(lambda entry: self.message_queue.put(self._format_entry(entry)))
 
     def start(self):
         """Start the log viewer in a separate thread."""
@@ -112,7 +112,7 @@ class GuiLogViewer:
             dashboard_menu.add_command(label="Copy URL", command=copy_url)  # type: ignore
             self.menubar.add_cascade(label="Dashboard", menu=dashboard_menu)
 
-    def add_log(self, message):
+    def add_log(self, entry: LogEntry | str):
         """
         Add a log message to the viewer.
 
@@ -120,7 +120,19 @@ class GuiLogViewer:
             message (str): The log message to display
 
         """
-        self.message_queue.put(message)
+        if isinstance(entry, LogEntry):
+            self.message_queue.put(self._format_entry(entry))
+        else:
+            self.message_queue.put(entry)
+
+    def _format_entry(self, entry: LogEntry) -> str:
+        metadata: list[str] = []
+        if entry.project_name:
+            metadata.append(f"project={entry.project_name}")
+        if entry.session_id:
+            metadata.append(f"session={entry.session_id}")
+        suffix = f" [{', '.join(metadata)}]" if metadata else ""
+        return f"{entry.message}{suffix}"
 
     def _determine_log_level(self, message):
         """

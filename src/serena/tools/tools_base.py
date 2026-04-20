@@ -17,8 +17,10 @@ from sensai.util.string import dict_string
 
 from serena.config.serena_config import LanguageBackend
 from serena.project import MemoriesManager, Project
+from serena.session_manager import SessionState
 from serena.prompt_factory import PromptFactory
 from serena.util.class_decorators import singleton
+from serena.util.logging import log_context
 from serena.util.inspection import iter_subclasses
 from solidlsp.ls_exceptions import SolidLSPException
 
@@ -35,6 +37,7 @@ SUCCESS_RESULT = "OK"
 # This is set by the tool execution wrapper and read by Component.project.
 # It is async-safe and scoped to the logical execution context (not OS threads).
 _current_project: ContextVar[Project | None] = ContextVar("_current_project", default=None)
+_current_session_id: ContextVar[str | None] = ContextVar("_current_session_id", default=None)
 
 
 @contextmanager
@@ -50,6 +53,11 @@ def project_context(project: Project | None) -> Iterator[None]:
         yield
     finally:
         _current_project.reset(token)
+
+
+def get_current_session_id() -> str | None:
+    """Get the current session ID from the context variable."""
+    return _current_session_id.get()
 
 
 class Component(ABC):
@@ -341,6 +349,7 @@ class Tool(Component):
         """
         # Extract session ID from MCP context
         session_id: str | None = None
+        client_str: str | None = None
         if mcp_ctx is not None:
             try:
                 session_id = "%x" % id(mcp_ctx.session)
@@ -353,13 +362,38 @@ class Tool(Component):
                         self.set_last_tool_call_client_str(client_str)
                     # Extract session ID
                     session_id = getattr(mcp_ctx.session, "id", None) or getattr(mcp_ctx.session, "session_id", None)
+                    try:
+                        lifespan_ctx = getattr(mcp_ctx.request_context, "lifespan_context", None)
+                        if lifespan_ctx is not None:
+                            if session_id and getattr(lifespan_ctx, "session_id", None) is None:
+                                lifespan_ctx.session_id = session_id
+                            if client_str and getattr(lifespan_ctx, "client_info", None) != client_str:
+                                lifespan_ctx.client_info = client_str
+                    except AttributeError:
+                        # Older fastmcp versions may not expose request_context; ignore gracefully
+                        pass
             except BaseException as e:
                 log.info(f"Failed to get client info: {e}.")
+
+        session_state: SessionState | None = None
+        if session_id:
+            session_state = self.agent.ensure_session_registered(session_id, client_info=client_str)
 
         # Resolve the project for this tool call
         target_project: Project | None = None
         if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
             target_project = self.agent.resolve_session_project(session_id, cwd)
+
+        # Enforce per-session tool visibility if configured
+        if session_state and session_state.tool_allowlist is not None:
+            tool_name = self.get_name_from_cls()
+            if tool_name not in session_state.tool_allowlist:
+                allowed = ", ".join(sorted(session_state.tool_allowlist))
+                log.debug("Denied tool '%s' for session %s (allowlist=%s)", tool_name, session_id, allowed)
+                return (
+                    "Error: Tool '{tool}' is not permitted for this session. "
+                    "Allowed tools: {allowed}."
+                ).format(tool=tool_name, allowed=allowed)
 
         def task() -> str:
             apply_fn = self.get_apply_fn()
@@ -373,8 +407,11 @@ class Tool(Component):
             if log_call:
                 self._log_tool_application(inspect.currentframe())
 
-            # Execute within the resolved project's context
-            with project_context(target_project):
+            # Execute within the resolved project's context and session context
+            with project_context(target_project), log_context(
+                session_id, target_project.project_name if target_project is not None else None
+            ):
+                session_token = _current_session_id.set(session_id)
                 try:
                     # check whether the tool requires an active project
                     if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
@@ -427,12 +464,20 @@ class Tool(Component):
                         ls_manager.save_all_caches()
                 except Exception as e:
                     log.error(f"Error saving language server cache: {e}")
+                finally:
+                    _current_session_id.reset(session_token)
 
-                return result
+            return result
 
         # execute the tool in the agent's task executor, with timeout
         try:
-            task_exec = self.agent.issue_task(task, name=self.__class__.__name__)
+            task_exec = self.agent.issue_task(
+                task,
+                name=self.__class__.__name__,
+                project=target_project.project_name if target_project is not None else None,
+                read_only=self.is_readonly(),
+                session_id=session_id,
+            )
             return task_exec.result(timeout=self.agent.serena_config.tool_timeout)
         except Exception as e:  # typically TimeoutError (other exceptions caught in task)
             msg = f"Error: {e.__class__.__name__} - {e}"

@@ -22,12 +22,6 @@
             <div class="logo-container">
                 <img id="serena-logo" class="theme-aware-img" src="serena-logo.svg" data-src-light="serena-logo.svg" data-src-dark="serena-logo-dark-mode.svg" alt="Serena">
             </div>
-
-            <!-- Platinum Banners in Header -->
-            <div id="platinum-banners" class="header-banner">
-                <button class="banner-arrow banner-arrow-left" data-target="platinum" aria-label="Previous banner">&#8249;</button>
-                <button class="banner-arrow banner-arrow-right" data-target="platinum" aria-label="Next banner">&#8250;</button>
-            </div>
         </div>
 
         <nav class="header-nav">
@@ -211,6 +205,26 @@
                         </div>
                     </section>
 
+                    <!-- Sessions Card -->
+                    <section class="card sidebar-card">
+                        <div class="card-header collapsible-header" id="sessions-header">
+                            <h2 class="card-title">
+                                <span class="card-icon">🧑‍💻</span>
+                                Sessions
+                            </h2>
+                            <span class="toggle-icon">
+                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                    <polyline points="6 9 12 15 18 9"></polyline>
+                                </svg>
+                            </span>
+                        </div>
+                        <div id="sessions-display" class="collapsible-content card-body" style="display:none">
+                            <div class="empty-state small">
+                                <span class="empty-text">No active sessions</span>
+                            </div>
+                        </div>
+                    </section>
+
                     <!-- Available Tools Card -->
                     <section class="card sidebar-card">
                         <div class="card-header collapsible-header" id="available-tools-header">
@@ -276,6 +290,12 @@
                         <button class="banner-arrow banner-arrow-left" data-target="gold" aria-label="Previous banner">&#8249;</button>
                         <button class="banner-arrow banner-arrow-right" data-target="gold" aria-label="Next banner">&#8250;</button>
                     </section>
+
+                    <!-- Platinum Banners -->
+                    <section id="platinum-banners" class="banner-section">
+                        <button class="banner-arrow banner-arrow-left" data-target="platinum" aria-label="Previous banner">&#8249;</button>
+                        <button class="banner-arrow banner-arrow-right" data-target="platinum" aria-label="Next banner">&#8250;</button>
+                    </section>
                 </div>
             </div>
         </div>
@@ -332,6 +352,31 @@
                             <span>Clear</span>
                         </button>
                     </div>
+                </div>
+                <div class="log-filters">
+                    <div class="log-filter-group">
+                        <label for="log-project-filter">Project</label>
+                        <select id="log-project-filter">
+                            <option value="">All projects</option>
+                        </select>
+                    </div>
+                    <div class="log-filter-group">
+                        <label for="log-session-filter">Session</label>
+                        <select id="log-session-filter">
+                            <option value="">All sessions</option>
+                        </select>
+                    </div>
+                    <div class="log-filter-group">
+                        <label for="log-level-filter">Level</label>
+                        <select id="log-level-filter">
+                            <option value="">All levels</option>
+                            <option value="ERROR">Errors</option>
+                            <option value="WARNING">Warnings</option>
+                            <option value="INFO">Info</option>
+                            <option value="DEBUG">Debug</option>
+                        </select>
+                    </div>
+                    <button id="log-filter-reset" class="log-action-btn secondary">Reset</button>
                 </div>
                 <div id="log-container" class="log-container"></div>
             </div>

@@ -47,23 +47,37 @@ class SerenaMCPRequestContext:
     agent: SerenaAgent
 
 
+@dataclass
+class SerenaConnectionContext:
+    session_id: str | None = None
+    client_info: str | None = None
+
+
 class SerenaMCPFactory:
     """
     Factory for the creation of the Serena MCP server with an associated SerenaAgent.
     """
 
-    def __init__(self, context: str = DEFAULT_CONTEXT, project: str | None = None, memory_log_handler: MemoryLogHandler | None = None):
+    def __init__(
+        self,
+        context: str = DEFAULT_CONTEXT,
+        project: str | None = None,
+        memory_log_handler: MemoryLogHandler | None = None,
+        auto_register_projects: bool = False,
+    ):
         """
         :param context: The context name or path to context file
         :param project: Either an absolute path to the project directory or a name of an already registered project.
             If the project passed here hasn't been registered yet, it will be registered automatically and can be activated by its name
             afterward.
         :param memory_log_handler: the in-memory log handler to use for the agent's logging
+        :param auto_register_projects: whether to allow on-demand project registration during session handshake
         """
         self.context = SerenaAgentContext.load(context)
         self.project = project
         self.agent: SerenaAgent | None = None
         self.memory_log_handler = memory_log_handler
+        self.auto_register_projects = auto_register_projects
 
     @staticmethod
     def _sanitize_for_openai_tools(schema: dict) -> dict:
@@ -270,7 +284,12 @@ class SerenaMCPFactory:
 
     def _create_serena_agent(self, serena_config: SerenaConfig, modes: ModeSelectionDefinition | None = None) -> SerenaAgent:
         return SerenaAgent(
-            project=self.project, serena_config=serena_config, context=self.context, modes=modes, memory_log_handler=self.memory_log_handler
+            project=self.project,
+            serena_config=serena_config,
+            context=self.context,
+            modes=modes,
+            memory_log_handler=self.memory_log_handler,
+            auto_register_projects=self.auto_register_projects,
         )
 
     def _create_default_serena_config(self) -> SerenaConfig:
@@ -353,16 +372,39 @@ class SerenaMCPFactory:
 
     @asynccontextmanager
     async def server_lifespan(self, mcp_server: FastMCP) -> AsyncIterator[None]:
-        """Manage server startup and shutdown lifecycle."""
+        """Manage server startup and shutdown lifecycle.
+
+        In SSE/daemon mode, the lifespan is entered per-connection. The agent
+        must persist across connections, so we only set up tools here and
+        defer shutdown to the daemon process signal handler.
+
+        Session tracking: on entry, we register the session with the SessionManager
+        so that subsequent tool calls can resolve the correct project per-client.
+
+        IMPORTANT: We yield immediately so the SSE endpoint event is sent to the client.
+        Tool setup happens after the connection is established (tools are registered
+        on the server at creation time, not per-connection).
+        """
+        assert self.agent is not None
+        session_manager = self.agent.get_session_manager()
+
+        # Extract session ID and client info from the MCP connection
+        connection_ctx = SerenaConnectionContext()
+
         openai_tool_compatible = self.context.name in ["chatgpt", "codex", "oaicompat-agent"]
         self._set_mcp_tools(mcp_server, openai_tool_compatible=openai_tool_compatible)
         log.info("MCP server lifetime setup complete")
         try:
-            yield
+            yield connection_ctx
         finally:
-            log.info("MCP server shutting down")
-            if self.agent is not None:
-                self.agent.on_shutdown()
+            # Unregister session on disconnect
+            if connection_ctx.session_id:
+                session_manager.unregister_session(connection_ctx.session_id)
+            log.info("MCP server connection closed (agent persists in daemon mode)")
+            # NOTE: Do NOT call self.agent.on_shutdown() here.
+            # In SSE/daemon mode, lifespan is entered per-connection and the agent
+            # must persist. Shutdown is handled by the daemon's SIGTERM/SIGINT handlers.
+            # In stdio mode, the process exits naturally after the single connection.
 
     def _get_initial_instructions(self) -> str:
         assert self.agent is not None

@@ -45,6 +45,7 @@ from serena.ls_manager import LanguageServerManager
 from serena.project import MemoriesManager, Project
 from serena.prompt_factory import SerenaPromptFactory
 from serena.task_executor import TaskExecutor
+from serena.session_manager import SessionManager, SessionState
 from serena.tools import (
     ActivateProjectTool,
     DeactivateProjectTool,
@@ -509,6 +510,7 @@ class SerenaAgent:
         context: SerenaAgentContext | None = None,
         modes: ModeSelectionDefinition | None = None,
         memory_log_handler: MemoryLogHandler | None = None,
+        auto_register_projects: bool = False,
     ):
         """
         :param project: the project to load immediately or None to not load any project; may be a path to the project or a name of
@@ -521,16 +523,19 @@ class SerenaAgent:
             The modes may adjust prompts, tool availability, and tool descriptions.
         :param memory_log_handler: a MemoryLogHandler instance from which to read log messages; if None, a new one will be created
             if necessary.
+        :param auto_register_projects: whether the agent may automatically register previously unseen projects when given a
+            filesystem path (e.g. via session handshake). Defaults to False for safety.
         """
         self._active_projects: dict[str, Project] = {}  # project_name → Project instance
         self._session_projects: dict[str, str | None] = {}  # session_id → project_name (cached per session)
-        self._project_activation_callback = project_activation_callback
+        self._session_manager = SessionManager()
+        self._session_context_overrides: dict[str, SerenaAgentContext] = {}
         self._project_last_active: dict[str, float] = {}  # project_name → last_active_timestamp
         self._idle_timer: threading.Timer | None = None
         self._gui_log_viewer: Optional["GuiLogViewer"] = None
-        self._dashboard_manager: DashboardManager | None = None
-        self._project_prompt_status = ProjectPromptProvisionStatus()
-        self._mode_overrides = modes
+        self._dashboard_viewer_process: multiprocessing.Process | None = None
+        self._auto_register_projects = auto_register_projects
+
         self.version = serena_version()
 
         # obtain serena configuration using the decoupled factory function
@@ -813,10 +818,11 @@ class SerenaAgent:
 
     def get_current_tasks(self) -> list[TaskExecutor.TaskInfo]:
         """
-        Gets the list of tasks currently running or queued for execution.
-        The function returns a list of thread-safe TaskInfo objects (specifically created for the caller).
+        Gets metadata for tasks currently running or waiting to acquire execution slots.
+        The returned TaskInfo objects are thread-safe snapshots that can be inspected outside
+        of the agent lock.
 
-        :return: the list of tasks in the execution order (running task first)
+        :return: the list of tasks known to the executor at call time
         """
         return self._task_executor.get_current_tasks()
 
@@ -979,8 +985,9 @@ class SerenaAgent:
         Resolution order:
         1. If cwd is provided, resolve it to a project via longest-prefix matching
            and cache the result for the session
-        2. Fall back to the session-cached project name
-        3. Fall back to the first active project (backward compatibility)
+        2. Fall back to session manager's project binding
+        3. Fall back to the session-cached project name
+        4. Fall back to the first active project (backward compatibility)
 
         :param session_id: the MCP session/client identifier
         :param cwd: the current working directory of the tool call
@@ -993,9 +1000,18 @@ class SerenaAgent:
                 # Cache for this session
                 if session_id:
                     self._session_projects[session_id] = project.project_name
+                    self._session_manager.set_project(session_id, project.project_name)
                 return project
 
-        # Step 2: Fall back to session cache
+        # Step 2: Fall back to session manager's binding
+        if session_id:
+            manager_project_name = self._session_manager.get_project_name(session_id)
+            if manager_project_name:
+                project = self._active_projects.get(manager_project_name)
+                if project:
+                    return project
+
+        # Step 3: Fall back to session-cached project name
         if session_id:
             cached_name = self._session_projects.get(session_id)
             if cached_name:
@@ -1003,7 +1019,7 @@ class SerenaAgent:
                 if project:
                     return project
 
-        # Step 3: Fall back to first active project (backward compat)
+        # Step 4: Fall back to first active project (backward compat)
         return self.get_active_project()
 
     def get_session_project(self, session_id: str) -> Project | None:
@@ -1013,16 +1029,126 @@ class SerenaAgent:
         :param session_id: the MCP session/client identifier
         :return: the cached Project, or None
         """
+        # Check session manager first
+        manager_project_name = self._session_manager.get_project_name(session_id)
+        if manager_project_name:
+            return self._active_projects.get(manager_project_name)
+        # Fall back to legacy cache
         cached_name = self._session_projects.get(session_id)
         if cached_name:
             return self._active_projects.get(cached_name)
         return None
+
+    def get_session_manager(self) -> SessionManager:
+        """Return the session manager for multi-client daemon support."""
+        return self._session_manager
+
+    def get_session_state(self, session_id: str) -> SessionState | None:
+        """Return the SessionState for the given session ID, if known."""
+        return self._session_manager.get_session(session_id)
+
+    def ensure_session_registered(self, session_id: str, *, client_info: str | None = None) -> SessionState:
+        """Ensure the session is registered and marked active."""
+        return self._session_manager.register_session(session_id, client_info=client_info)
+
+    def initialize_session(
+        self,
+        session_id: str,
+        *,
+        project: str | None = None,
+        context: str | None = None,
+        persona: str | None = None,
+        tool_allowlist: Sequence[str] | None = None,
+        backend_hint: str | None = None,
+        client_info: str | None = None,
+    ) -> SessionState:
+        """Apply handshake metadata to a session and optionally activate/bind a project."""
+
+        log.debug(
+            "Initializing session %s (project=%s, context=%s, persona=%s, backend_hint=%s)",
+            session_id,
+            project,
+            context,
+            persona,
+            backend_hint,
+        )
+
+        # Apply context override if provided
+        if context:
+            try:
+                context_obj = SerenaAgentContext.load(context)
+            except Exception as exc:  # pragma: no cover - defensive
+                raise ValueError(f"Failed to load context '{context}': {exc}") from exc
+            self._session_context_overrides[session_id] = context_obj
+        elif context == "":
+            # explicit request to clear context override
+            self._session_context_overrides.pop(session_id, None)
+
+        # Register/update the session with provided metadata
+        state = self._session_manager.register_session(
+            session_id,
+            client_info=client_info,
+            project_name=None,
+            context_name=context or None,
+            persona_name=persona,
+            tool_allowlist=tool_allowlist,
+            backend_hint=backend_hint,
+        )
+
+        # Handle project activation/binding after registration
+        if project:
+            activation_target = project
+            registered_project = self.serena_config.get_project(activation_target)
+            if registered_project is None and os.path.isdir(activation_target) and not self._auto_register_projects:
+                raise ValueError(
+                    f"Project '{activation_target}' is not registered. Launch Serena with --auto-register to allow on-demand "
+                    "registration, or register the project manually before connecting."
+                )
+            try:
+                was_new_activation = self.activate_project_from_path_or_name(activation_target)
+                log.debug(
+                    "Session %s activated project via handshake (target=%s, new_activation=%s)",
+                    session_id,
+                    activation_target,
+                    was_new_activation,
+                )
+            except ProjectNotFoundError as exc:
+                raise ValueError(f"Failed to activate project '{activation_target}': {exc}") from exc
+            except Exception as exc:
+                raise ValueError(f"Failed to activate project '{activation_target}': {exc}") from exc
+
+            # Determine the canonical project name after activation
+            activated_project = self.serena_config.get_project(activation_target)
+            if activated_project is None and os.path.isdir(activation_target):
+                activated_project = self.resolve_project_for_path(os.path.abspath(activation_target))
+            if activated_project is None:
+                # Fall back to first active project if ambiguous
+                activated_project = self.get_active_project()
+            if activated_project is not None:
+                canonical_name = activated_project.project_name
+                self._session_projects[session_id] = canonical_name
+                state = self._session_manager.update_session(
+                    session_id,
+                    project_name=canonical_name,
+                    client_info=client_info,
+                )
+            else:
+                log.warning(
+                    "Handshake activated project '%s' but could not resolve canonical name; session %s remains unbound",
+                    activation_target,
+                    session_id,
+                )
+
+        return state
 
     # ── Idle timeout tracking ──────────────────────────────────────────────
 
     def _touch_project(self, project: Project) -> None:
         """Update the last-active timestamp for a project."""
         self._project_last_active[project.project_name] = time.time()
+        # Also touch all sessions bound to this project
+        for session in self._session_manager.get_sessions_for_project(project.project_name):
+            session.touch()
 
     def _start_idle_checker(self) -> None:
         """Start the periodic idle project checker."""
@@ -1038,10 +1164,25 @@ class SerenaAgent:
         changed = False
 
         for name, last_active in list(self._project_last_active.items()):
-            if now - last_active > timeout:
+            session_count = self._session_manager.get_project_session_count(name)
+            if session_count > 0:
+                log.debug(
+                    "Skipping idle shutdown for project '%s' because %s session(s) remain bound",
+                    name,
+                    session_count,
+                )
+                continue
+
+            idle_duration = now - last_active
+            if idle_duration > timeout:
                 project = self._active_projects.get(name)
                 if project:
-                    log.info(f"Project '{name}' idle for {now - last_active:.0f}s (timeout={timeout}s), shutting down")
+                    log.info(
+                        "Project '%s' idle for %.0fs (timeout=%ss) with no active sessions, shutting down",
+                        name,
+                        idle_duration,
+                        timeout,
+                    )
                     self._persist_project_state(project)
                     self._remove_active_project(name)
                     changed = True
@@ -1114,42 +1255,39 @@ class SerenaAgent:
         template = JinjaTemplate(prompt_template)
         return template.render(available_tools=self._exposed_tools.tool_names, available_markers=self._exposed_tools.tool_marker_names)
 
-    def create_connection_prompt(self) -> str:
-        """
-        Returns the bootstrap prompt to be sent at MCP connection time.
+    def create_system_prompt(self, session_id: str | None = None) -> str:
+        if session_id is None:
+            try:
+                from serena.tools.tools_base import get_current_session_id
 
-        :return: the prompt
-        """
-        return self.prompt_factory.create_connection_prompt()
+                session_id = get_current_session_id()
+            except Exception:  # pragma: no cover - defensive fallback
+                session_id = None
 
-    def create_system_prompt(self, session_id: str = "global") -> str:
-        """
-        Returns the 'Serena Instructions Manual', i.e. Serena's system prompt.
+        session_state = self.get_session_state(session_id) if session_id else None
+        context_override = self._session_context_overrides.get(session_id) if session_id else None
+        effective_context = context_override or self._context
 
-        :param session_id: the client session ID for the case where this is run from a tool; "global" for the connection time case
-        :return: the prompt
-        """
         available_tools = self._active_tools
         available_markers = available_tools.tool_marker_names
+        tool_names = available_tools.tool_names
+        if session_state and session_state.tool_allowlist:
+            allowlist = set(session_state.tool_allowlist)
+            tool_names = [name for name in tool_names if name in allowlist]
+
         global_memories = MemoriesManager(
             serena_data_folder=None, read_only_memory_patterns=self.serena_config.read_only_memory_patterns
         ).list_global_memories()
         global_memories_str = dict_string(global_memories.to_dict()) if len(global_memories) > 0 else ""
-        log.info("Generating system prompt with available_tools=(see active tools), available_markers=%s", available_markers)
-
-        # determine modes for which prompts must (still) be provided, excluding modes that were already provided in a
-        # previously provided project activation message (if any)
-        relevant_modes = []
-        for mode in self.get_active_modes():
-            if mode.has_prompt():
-                if not self._project_prompt_status.is_mode_prompt_already_provided(mode.name, session_id):
-                    relevant_modes.append(mode)
-        self._project_prompt_status.mark_mode_prompts_as_provided(session_id)
-
+        log.info(
+            "Generating system prompt with available_tools=(see active tools), available_markers=%s, session_id=%s",
+            available_markers,
+            session_id,
+        )
         system_prompt = self.prompt_factory.create_system_prompt(
-            context_system_prompt=self._format_prompt(self._context.prompt),
-            mode_system_prompts=[self._format_prompt(mode.prompt) for mode in relevant_modes],
-            available_tools=available_tools.tool_names,
+            context_system_prompt=self._format_prompt(effective_context.prompt),
+            mode_system_prompts=[self._format_prompt(mode.prompt) for mode in self.get_active_modes()],
+            available_tools=tool_names,
             available_markers=available_markers,
             global_memories_list=global_memories_str,
         )
@@ -1158,6 +1296,10 @@ class SerenaAgent:
         if self._active_project is not None and not self._project_prompt_status.is_project_activation_message_already_provided(session_id):
             system_prompt += "\n\n" + self.get_project_activation_message(session_id)
 
+        if session_state and session_state.persona_name:
+            system_prompt += f"\nPersona: {session_state.persona_name}"
+
+        log.info("System prompt:\n%s", system_prompt)
         return system_prompt
 
     def get_project_activation_message(self, session_id: str) -> str:
@@ -1266,7 +1408,15 @@ class SerenaAgent:
             )
 
     def issue_task(
-        self, task: Callable[[], T], name: str | None = None, logged: bool = True, timeout: float | None = None
+        self,
+        task: Callable[[], T],
+        name: str | None = None,
+        logged: bool = True,
+        timeout: float | None = None,
+        *,
+        project: str | None = None,
+        read_only: bool = False,
+        session_id: str | None = None,
     ) -> TaskExecutor.Task[T]:
         """
         Issue a task to the executor for asynchronous execution.
@@ -1276,11 +1426,32 @@ class SerenaAgent:
         :param name: the name of the task for logging purposes; if None, use the task function's name
         :param logged: whether to log management of the task; if False, only errors will be logged
         :param timeout: the maximum time to wait for task completion in seconds, or None to wait indefinitely
+        :param project: Optional project name used to schedule per-project concurrency.
+        :param read_only: Whether the task is read-only (allows parallelism with other read-only tasks on the same project).
+        :param session_id: Optional session identifier for diagnostics.
         :return: the task object, through which the task's future result can be accessed
         """
-        return self._task_executor.issue_task(task, name=name, logged=logged, timeout=timeout)
+        return self._task_executor.issue_task(
+            task,
+            name=name,
+            logged=logged,
+            timeout=timeout,
+            project=project,
+            read_only=read_only,
+            session_id=session_id,
+        )
 
-    def execute_task(self, task: Callable[[], T], name: str | None = None, logged: bool = True, timeout: float | None = None) -> T:
+    def execute_task(
+        self,
+        task: Callable[[], T],
+        name: str | None = None,
+        logged: bool = True,
+        timeout: float | None = None,
+        *,
+        project: str | None = None,
+        read_only: bool = False,
+        session_id: str | None = None,
+    ) -> T:
         """
         Executes the given task synchronously via the agent's task executor.
         This is useful for tasks that need to be executed immediately and whose results are needed right away.
@@ -1289,9 +1460,20 @@ class SerenaAgent:
         :param name: the name of the task for logging purposes; if None, use the task function's name
         :param logged: whether to log management of the task; if False, only errors will be logged
         :param timeout: the maximum time to wait for task completion in seconds, or None to wait indefinitely
+        :param project: Optional project name for concurrency scoping.
+        :param read_only: Whether the task is read-only.
+        :param session_id: Optional session identifier for diagnostics.
         :return: the result of the task execution
         """
-        return self._task_executor.execute_task(task, name=name, logged=logged, timeout=timeout)
+        return self._task_executor.execute_task(
+            task,
+            name=name,
+            logged=logged,
+            timeout=timeout,
+            project=project,
+            read_only=read_only,
+            session_id=session_id,
+        )
 
     def is_using_language_server(self) -> bool:
         """
@@ -1372,6 +1554,10 @@ class SerenaAgent:
         sessions_to_clear = [sid for sid, pname in self._session_projects.items() if pname == project_name]
         for sid in sessions_to_clear:
             del self._session_projects[sid]
+
+        # Also clear session manager bindings for this project
+        for session in self._session_manager.get_sessions_for_project(project_name):
+            session.project_name = None
 
         # Update modes and tools since the project is no longer active
         self._update_active_modes()
@@ -1533,6 +1719,8 @@ class SerenaAgent:
             project.shutdown(timeout=timeout)
         self._active_projects.clear()
         self._session_projects.clear()
+        self._session_context_overrides.clear()
+        self._session_manager = SessionManager()
         self._project_last_active.clear()
         if self._gui_log_viewer:
             log.info("Stopping the GUI log window ...")

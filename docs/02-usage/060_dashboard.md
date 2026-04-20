@@ -36,7 +36,10 @@ The dashboard provides ...
  * a detailed overview of
    * the current Serena status and configuration (e.g. active tools, active programming languages, enabled modes and contexts, etc.)
    * ongoing and past tool calls (and statistics on tool usage)
+   * **active sessions** -- each connected MCP client session with its bound project, client info, context/persona overrides, and idle time
  * access to Serena's live logs
+   * logs are tagged with `session_id` and `project_name` metadata
+   * filter logs by session, project, and log level in the UI
  * the ability to modify settings (e.g. the set of active programming languages) on the fly
  * the ability to edit 
    * configuration files (global `serena_config.yml` and project-specific `project.yml`)

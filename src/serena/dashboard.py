@@ -25,7 +25,7 @@ from serena.analytics import ToolUsageStats
 from serena.config.serena_config import SerenaConfig, SerenaPaths
 from serena.constants import SERENA_DASHBOARD_DIR, SerenaPorts
 from serena.task_executor import TaskExecutor
-from serena.util.logging import MemoryLogHandler
+from serena.util.logging import LogEntry, MemoryLogHandler
 from serena.util.pywebview import WebViewWithTray
 
 if TYPE_CHECKING:
@@ -39,10 +39,13 @@ logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 class RequestLog(BaseModel):
     start_idx: int = 0
+    session_id: str | None = None
+    project_name: str | None = None
+    levels: list[str] | None = None
 
 
 class ResponseLog(BaseModel):
-    messages: list[str]
+    messages: list[dict[str, Any]]
     max_idx: int
     active_project: str | None = None
 
@@ -57,7 +60,8 @@ class ResponseToolStats(BaseModel):
 
 class ResponseConfigOverview(BaseModel):
     active_project: dict[str, str | None]
-    active_projects: list[dict[str, str | bool | float | None]]
+    active_projects: list[dict[str, Any]]
+    active_sessions: list[dict[str, Any]]
     context: dict[str, str]
     modes: list[dict[str, str]]
     active_tools: list[str]
@@ -127,6 +131,9 @@ class QueuedExecution(BaseModel):
     name: str
     finished_successfully: bool
     logged: bool
+    project: str | None = None
+    read_only: bool = False
+    session_id: str | None = None
 
     @classmethod
     def from_task_info(cls, task_info: TaskExecutor.TaskInfo) -> Self:
@@ -136,6 +143,9 @@ class QueuedExecution(BaseModel):
             name=task_info.name,
             finished_successfully=task_info.finished_successfully(),
             logged=task_info.logged,
+            project=None if task_info.project == TaskExecutor._GLOBAL_KEY else task_info.project,
+            read_only=task_info.read_only,
+            session_id=task_info.session_id,
         )
 
 
@@ -450,11 +460,36 @@ class SerenaDashboardAPI:
             except Exception as e:
                 return {"status": "error", "message": str(e)}
 
+    @staticmethod
+    def _serialize_log_entry(entry: LogEntry) -> dict[str, Any]:
+        return {
+            "sequence": entry.sequence,
+            "message": entry.message,
+            "level": entry.level,
+            "logger": entry.logger_name,
+            "created": entry.created,
+            "thread": entry.thread_name,
+            "session_id": entry.session_id,
+            "project_name": entry.project_name,
+        }
+
     def _get_log_messages(self, request_log: RequestLog) -> ResponseLog:
         messages = self._memory_log_handler.get_log_messages(from_idx=request_log.start_idx)
+        filtered: list[LogEntry] = []
+        level_filter = {level.upper() for level in request_log.levels} if request_log.levels else None
+        for entry in messages.messages:
+            if request_log.session_id and entry.session_id != request_log.session_id:
+                continue
+            if request_log.project_name and entry.project_name != request_log.project_name:
+                continue
+            if level_filter and entry.level.upper() not in level_filter:
+                continue
+            filtered.append(entry)
+
         project = self._agent.get_active_project()
         project_name = project.project_name if project else None
-        return ResponseLog(messages=messages.messages, max_idx=messages.max_idx, active_project=project_name)
+        serialized = [self._serialize_log_entry(entry) for entry in filtered]
+        return ResponseLog(messages=serialized, max_idx=messages.max_idx, active_project=project_name)
 
     def _get_tool_names(self) -> ResponseToolNames:
         return ResponseToolNames(tool_names=self._tool_names)
@@ -475,15 +510,23 @@ class SerenaDashboardAPI:
         from serena.config.context_mode import SerenaAgentContext, SerenaAgentMode
         from serena.tools.tools_base import Tool
 
-        # Get all active projects
+        # Get all active projects with full per-project data
         all_active = self._agent.get_all_active_projects()
-        active_projects_info: list[dict[str, str | bool | None]] = []
+        active_projects_info: list[dict[str, Any]] = []
         for name, proj in all_active.items():
-            languages = ", ".join(lang.value for lang in proj.project_config.languages)
+            languages = [lang.value for lang in proj.project_config.languages]
             ls_manager = proj.language_server_manager
             lsp_running = ls_manager.is_running() if ls_manager else False
             last_active = self._agent._project_last_active.get(name)
             idle_seconds = time.time() - last_active if last_active else None
+
+            # Get per-project memories
+            project_memories = None
+            try:
+                project_memories = proj.memories_manager.list_memories().get_full_list()
+            except Exception:
+                pass
+
             active_projects_info.append(
                 {
                     "name": name,
@@ -491,6 +534,9 @@ class SerenaDashboardAPI:
                     "languages": languages,
                     "lsp_running": lsp_running,
                     "idle_seconds": idle_seconds,
+                    "encoding": proj.project_config.encoding,
+                    "read_only": proj.project_config.read_only,
+                    "memories": project_memories,
                 }
             )
 
@@ -601,9 +647,13 @@ class SerenaDashboardAPI:
         if project is not None:
             encoding = project.project_config.encoding
 
+        # Get active sessions
+        active_sessions = self._agent.get_session_manager().to_dict_list()
+
         return ResponseConfigOverview(
             active_project=project_info,
             active_projects=active_projects_info,
+            active_sessions=active_sessions,
             context=context_info,
             modes=modes_info,
             active_tools=active_tools,

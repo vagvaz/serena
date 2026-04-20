@@ -1,6 +1,9 @@
+import copy
 import queue
 import threading
 from collections.abc import Callable
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import Optional
 
@@ -10,17 +13,50 @@ from serena.constants import LOG_MESSAGES_BUFFER_SIZE, SERENA_LOG_FORMAT
 
 lg = logging
 
+_log_session_id: ContextVar[str | None] = ContextVar("serena_log_session_id", default=None)
+_log_project_name: ContextVar[str | None] = ContextVar("serena_log_project_name", default=None)
+
+
+@contextmanager
+def log_context(session_id: str | None, project_name: str | None):
+    """Context manager that annotates log records with session/project metadata."""
+
+    session_token = _log_session_id.set(session_id)
+    project_token = _log_project_name.set(project_name)
+    try:
+        yield
+    finally:
+        _log_session_id.reset(session_token)
+        _log_project_name.reset(project_token)
+
+
+def get_current_log_session_id() -> str | None:
+    return _log_session_id.get()
+
+
+def get_current_log_project_name() -> str | None:
+    return _log_project_name.get()
+
+
+@dataclass
+class LogEntry:
+    message: str
+    level: str
+    logger_name: str
+    created: float
+    thread_name: str
+    session_id: str | None
+    project_name: str | None
+    sequence: int = -1
+
 
 @dataclass
 class LogMessages:
-    messages: list[str]
-    """
-    the list of log messages, ordered from oldest to newest
-    """
+    messages: list[LogEntry]
+    """The list of log entries, ordered from oldest to newest."""
+
     max_idx: int
-    """
-    the 0-based index of the last message in `messages` (in the full log history)
-    """
+    """The 0-based index of the last message in ``messages``."""
 
 
 class MemoryLogHandler(logging.Handler):
@@ -28,34 +64,43 @@ class MemoryLogHandler(logging.Handler):
         super().__init__(level=level)
         self.setFormatter(logging.Formatter(SERENA_LOG_FORMAT))
         self._log_buffer = LogBuffer(max_messages=max_messages)
-        self._log_queue: queue.Queue[str] = queue.Queue()
+        self._log_queue: queue.Queue[LogEntry] = queue.Queue()
         self._stop_event = threading.Event()
-        self._emit_callbacks: list[Callable[[str], None]] = []
+        self._emit_callbacks: list[Callable[[LogEntry], None]] = []
 
         # start background thread to process logs
         self.worker_thread = threading.Thread(target=self._process_queue, daemon=True)
         self.worker_thread.start()
 
-    def add_emit_callback(self, callback: Callable[[str], None]) -> None:
-        """
-        Adds a callback that will be called with each log message.
-        The callback should accept a single string argument (the log message).
-        """
+    def add_emit_callback(self, callback: Callable[[LogEntry], None]) -> None:
+        """Register a callback invoked with each processed log entry."""
+
         self._emit_callbacks.append(callback)
 
     def emit(self, record: logging.LogRecord) -> None:
-        msg = self.format(record)
-        self._log_queue.put_nowait(msg)
+        entry = self._build_entry(record)
+        self._log_queue.put_nowait(entry)
+
+    def _build_entry(self, record: logging.LogRecord) -> LogEntry:
+        return LogEntry(
+            message=self.format(record),
+            level=record.levelname,
+            logger_name=record.name,
+            created=record.created,
+            thread_name=record.threadName,
+            session_id=get_current_log_session_id(),
+            project_name=get_current_log_project_name(),
+        )
 
     def _process_queue(self) -> None:
         while not self._stop_event.is_set():
             try:
-                msg = self._log_queue.get(timeout=1)
-                self._log_buffer.append(msg)
+                entry = self._log_queue.get(timeout=1)
+                stored_entry = self._log_buffer.append(entry)
                 for callback in self._emit_callbacks:
                     try:
-                        callback(msg)
-                    except:
+                        callback(stored_entry)
+                    except Exception:
                         pass
                 self._log_queue.task_done()
             except queue.Empty:
@@ -69,26 +114,23 @@ class MemoryLogHandler(logging.Handler):
 
 
 class LogBuffer:
-    """
-    A thread-safe buffer for storing (an optionally limited number of) log messages.
-    """
+    """Thread-safe buffer for log entries."""
 
     def __init__(self, max_messages: int | None = None) -> None:
         self._max_messages = max_messages
-        self._log_messages: list[str] = []
+        self._log_messages: list[LogEntry] = []
         self._lock = threading.Lock()
         self._max_idx = -1
-        """
-        the 0-based index of the most recently added log message
-        """
 
-    def append(self, msg: str) -> None:
+    def append(self, entry: LogEntry) -> LogEntry:
         with self._lock:
-            self._log_messages.append(msg)
             self._max_idx += 1
+            entry.sequence = self._max_idx
+            self._log_messages.append(entry)
             if self._max_messages is not None and len(self._log_messages) > self._max_messages:
                 excess = len(self._log_messages) - self._max_messages
                 self._log_messages = self._log_messages[excess:]
+            return entry
 
     def clear(self) -> None:
         with self._lock:
@@ -96,43 +138,19 @@ class LogBuffer:
             self._max_idx = -1
 
     def get_log_messages(self, from_idx: int = 0) -> LogMessages:
-        """
-        :param from_idx: the 0-based index of the first log message to return.
-            If from_idx is less than or equal to the index of the oldest message in the buffer,
-            then all messages in the buffer will be returned.
-        :return: the list of messages
-        """
         from_idx = max(from_idx, 0)
         with self._lock:
             first_stored_idx = self._max_idx - len(self._log_messages) + 1
             if from_idx <= first_stored_idx:
-                messages = self._log_messages.copy()
+                entries = self._log_messages.copy()
             else:
                 start_idx = from_idx - first_stored_idx
-                messages = self._log_messages[start_idx:].copy()
-            return LogMessages(messages=messages, max_idx=self._max_idx)
+                entries = self._log_messages[start_idx:].copy()
+            return LogMessages(messages=[copy.copy(entry) for entry in entries], max_idx=self._max_idx)
 
 
 class SuspendedLoggersContext:
-    """A context manager that provides an isolated logging environment.
-
-    Temporarily removes all root log handlers upon entry, providing a clean slate
-    for defining new log handlers within the context. Upon exit, restores the original
-    logging configuration. This is useful when you need to temporarily configure
-    an isolated logging setup with well-defined log handlers.
-
-    The context manager:
-        - Removes all existing (root) log handlers on entry
-        - Allows defining new temporary handlers within the context
-        - Restores the original configuration (handlers and root log level) on exit
-
-    Example:
-        >>> with SuspendedLoggersContext():
-        ...     # No handlers are active here (configure your own and set desired log level)
-        ...     pass
-        >>> # Original log handlers are restored here
-
-    """
+    """Isolated logging environment used for temporary logging configuration."""
 
     def __init__(self) -> None:
         self.saved_root_handlers: list = []
@@ -145,7 +163,7 @@ class SuspendedLoggersContext:
         root_logger.handlers.clear()
         return self
 
-    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
         root_logger = lg.getLogger()
         root_logger.handlers = self.saved_root_handlers
         if self.saved_root_level is not None:

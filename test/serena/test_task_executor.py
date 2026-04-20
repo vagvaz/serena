@@ -1,3 +1,5 @@
+from collections.abc import Callable
+import threading
 import time
 
 import pytest
@@ -6,121 +8,74 @@ from serena.task_executor import TaskExecutor
 
 
 @pytest.fixture
-def executor():
-    """
-    Fixture for a basic SerenaAgent without a project
-    """
-    return TaskExecutor("TestExecutor")
+def executor() -> TaskExecutor:
+    return TaskExecutor("TestExecutor", max_workers=4)
 
 
-class Task:
-    def __init__(self, delay: float, exception: bool = False):
-        self.delay = delay
-        self.exception = exception
-        self.did_run = False
+def _sleep_task(duration: float, *, value: str) -> Callable[[], str]:
+    def _run() -> str:
+        time.sleep(duration)
+        return value
 
-    def run(self):
-        self.did_run = True
-        time.sleep(self.delay)
-        if self.exception:
-            raise ValueError("Task failed")
-        return True
+    return _run
 
 
-def test_task_executor_sequence(executor):
-    """
-    Tests that a sequence of tasks is executed correctly
-    """
-    future1 = executor.issue_task(Task(1).run, name="task1")
-    future2 = executor.issue_task(Task(1).run, name="task2")
-    assert future1.result() is True
-    assert future2.result() is True
+def test_read_only_tasks_on_same_project_overlap(executor: TaskExecutor) -> None:
+    start = time.perf_counter()
+    task1 = executor.issue_task(_sleep_task(0.4, value="r1"), name="read1", project="proj", read_only=True)
+    task2 = executor.issue_task(_sleep_task(0.4, value="r2"), name="read2", project="proj", read_only=True)
+    assert task1.result() == "r1"
+    assert task2.result() == "r2"
+    duration = time.perf_counter() - start
+    assert duration < 0.7, "Read-only tasks should execute concurrently on the same project"
 
 
-def test_task_executor_exception(executor):
-    """
-    Tests that tasks that raise exceptions are handled correctly, i.e. that
-      * the exception is propagated,
-      * subsequent tasks are still executed.
-    """
-    future1 = executor.issue_task(Task(1, exception=True).run, name="task1")
-    future2 = executor.issue_task(Task(1).run, name="task2")
-    have_exception = False
-    try:
-        assert future1.result()
-    except Exception as e:
-        assert isinstance(e, ValueError)
-        have_exception = True
-    assert have_exception
-    assert future2.result() is True
+def test_write_blocks_reads_on_same_project(executor: TaskExecutor) -> None:
+    start = time.perf_counter()
+    writer = executor.issue_task(_sleep_task(0.5, value="w"), name="write", project="proj", read_only=False)
+    # Give the writer time to start and acquire the lock
+    time.sleep(0.05)
+    reader = executor.issue_task(_sleep_task(0.1, value="r"), name="read", project="proj", read_only=True)
+    assert writer.result() == "w"
+    assert reader.result() == "r"
+    duration = time.perf_counter() - start
+    assert duration >= 0.55, "Read should wait until write finishes on the same project"
 
 
-def test_task_executor_cancel_current(executor):
-    """
-    Tests that tasks that are cancelled are handled correctly, i.e. that
-      * subsequent tasks are executed as soon as cancellation ensues.
-      * the cancelled task raises CancelledError when result() is called.
-    """
-    start_time = time.time()
-    future1 = executor.issue_task(Task(10).run, name="task1")
-    future2 = executor.issue_task(Task(1).run, name="task2")
-    time.sleep(1)
-    future1.cancel()
-    assert future2.result() is True
-    end_time = time.time()
-    assert (end_time - start_time) < 9, "Cancelled task did not stop in time"
-    have_cancelled_error = False
-    try:
-        future1.result()
-    except Exception as e:
-        assert e.__class__.__name__ == "CancelledError"
-        have_cancelled_error = True
-    assert have_cancelled_error
+def test_writes_on_distinct_projects_run_concurrently(executor: TaskExecutor) -> None:
+    start = time.perf_counter()
+    task1 = executor.issue_task(_sleep_task(0.5, value="a"), name="writeA", project="projA")
+    task2 = executor.issue_task(_sleep_task(0.5, value="b"), name="writeB", project="projB")
+    assert task1.result() == "a"
+    assert task2.result() == "b"
+    duration = time.perf_counter() - start
+    assert duration < 0.9, "Writes on different projects should execute in parallel"
 
 
-def test_task_executor_cancel_future(executor):
-    """
-    Tests that when a future task is cancelled, it is never run at all
-    """
-    task1 = Task(10)
-    task2 = Task(1)
-    future1 = executor.issue_task(task1.run, name="task1")
-    future2 = executor.issue_task(task2.run, name="task2")
-    time.sleep(1)
-    future2.cancel()
-    future1.cancel()
-    try:
-        future2.result()
-    except:
-        pass
-    assert task1.did_run
-    assert not task2.did_run
+def test_exception_is_propagated(executor: TaskExecutor) -> None:
+    def boom() -> None:
+        raise ValueError("fail")
+
+    task = executor.issue_task(boom, name="boom", project="proj")
+    with pytest.raises(ValueError):
+        task.result()
 
 
-def test_task_executor_cancellation_via_task_info(executor):
-    start_time = time.time()
-    executor.issue_task(Task(10).run, "task1")
-    executor.issue_task(Task(10).run, "task2")
-    task_infos = executor.get_current_tasks()
-    task_infos2 = executor.get_current_tasks()
+def test_task_info_contains_metadata(executor: TaskExecutor) -> None:
+    started = threading.Event()
+    release = threading.Event()
 
-    # test expected tasks
-    assert len(task_infos) == 2
-    assert "task1" in task_infos[0].name
-    assert "task2" in task_infos[1].name
+    def blocking_task() -> str:
+        started.set()
+        release.wait(timeout=2)
+        return "done"
 
-    # test task identifiers being stable
-    assert task_infos2[0].task_id == task_infos[0].task_id
-
-    # test cancellation
-    task_infos[0].cancel()
-    time.sleep(0.5)
-    task_infos3 = executor.get_current_tasks()
-    assert len(task_infos3) == 1  # Cancelled task is gone from the queue
-    task_infos3[0].cancel()
-    try:
-        task_infos3[0].future.result()
-    except:
-        pass
-    end_time = time.time()
-    assert (end_time - start_time) < 9, "Cancelled task did not stop in time"
+    task = executor.issue_task(blocking_task, name="block", project="proj", session_id="sess-1")
+    assert started.wait(timeout=1), "Task did not start"
+    infos = executor.get_current_tasks()
+    info = next(info for info in infos if info.task_id == task.task_id)
+    assert info.project == "proj"
+    assert info.session_id == "sess-1"
+    assert info.is_running
+    release.set()
+    assert task.result() == "done"

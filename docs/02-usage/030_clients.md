@@ -30,6 +30,9 @@ while others have a global MCP configuration (e.g. Codex and Claude Desktop).
 - In the global configuration case, you must first activate the project you want to work on, which you can do by asking
   the LLM to do so (e.g., "Activate the current dir as project using serena"). In such settings, the `activate_project`
   tool is required.
+- When using [daemon mode](020_running#daemon-mode), multiple clients share a single Serena instance but each gets
+  an isolated session. After connecting, call the `session_init` tool to bind the session to a project and optionally
+  set per-session context, persona, and tool visibility overrides.
 
 **Tool Selection**.
 While you may be able to turn off tools through your client's interface (e.g., in VSCode or Claude Desktop),

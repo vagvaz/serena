@@ -1,19 +1,34 @@
 class LogMessage {
-    constructor(message, toolNames) {
-        message = this.escapeHtml(message);
-        const logLevel = this.determineLogLevel(message);
-        const highlightedMessage = this.highlightToolNames(message, toolNames);
-        this.$elem = $('<div>').addClass('log-' + logLevel).html(highlightedMessage + '\n');
+    constructor(entry, toolNames) {
+        const logLevel = this.determineLogLevel(entry.level);
+        const safeMessage = this.escapeHtml(entry.message);
+        const highlightedMessage = this.highlightToolNames(safeMessage, toolNames);
+
+        const timestamp = new Date(entry.created * 1000).toLocaleTimeString();
+        const metadataParts = [];
+        if (entry.project_name) {
+            metadataParts.push(`project: ${this.escapeHtml(entry.project_name)}`);
+        }
+        if (entry.session_id) {
+            metadataParts.push(`session: ${this.escapeHtml(entry.session_id)}`);
+        }
+        const metadata = metadataParts.length > 0 ? `<span class="log-meta">${metadataParts.join(' \u2022 ')}</span>` : '';
+
+        const header = `<div class="log-header"><span class="log-timestamp">${this.escapeHtml(timestamp)}</span>${metadata}</div>`;
+        const body = `<div class="log-line">${highlightedMessage}</div>`;
+
+        this.$elem = $('<div>').addClass('log-entry log-' + logLevel).html(header + body);
     }
 
-    determineLogLevel(message) {
-        if (message.startsWith('DEBUG')) {
+    determineLogLevel(levelName) {
+        const level = (levelName || '').toUpperCase();
+        if (level === 'DEBUG') {
             return 'debug';
-        } else if (message.startsWith('INFO')) {
+        } else if (level === 'INFO') {
             return 'info';
-        } else if (message.startsWith('WARNING')) {
+        } else if (level === 'WARNING' || level === 'WARN') {
             return 'warning';
-        } else if (message.startsWith('ERROR')) {
+        } else if (level === 'ERROR' || level === 'CRITICAL') {
             return 'error';
         } else {
             return 'default';
@@ -23,7 +38,8 @@ class LogMessage {
     highlightToolNames(message, toolNames) {
         let highlightedMessage = message;
         toolNames.forEach(function (toolName) {
-            const regex = new RegExp('\\b' + toolName + '\\b', 'gi');
+            const escapedToolName = toolName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+            const regex = new RegExp('\\b' + escapedToolName + '\\b', 'gi');
             highlightedMessage = highlightedMessage.replace(regex, '<span class="tool-name">' + toolName + '</span>');
         });
         return highlightedMessage;
@@ -253,6 +269,12 @@ class Dashboard {
 
         // Tool names and stats
         this.toolNames = [];
+        this.activeSessions = [];
+        this.logFilters = {
+            projectName: '',
+            sessionId: '',
+            level: '',
+        };
         this.currentMaxIdx = -1;
         this.pollInterval = null;
         this.configPollInterval = null;
@@ -308,6 +330,8 @@ class Dashboard {
         this.$clearStats = $('#clear-stats');
         this.$projectsDisplay = $('#projects-display');
         this.$projectsHeader = $('#projects-header');
+        this.$sessionsHeader = $('#sessions-header');
+        this.$sessionsDisplay = $('#sessions-display');
         this.$availableToolsDisplay = $('#available-tools-display');
         this.$availableModesDisplay = $('#available-modes-display');
         this.$availableContextsDisplay = $('#available-contexts-display');
@@ -348,6 +372,10 @@ class Dashboard {
         this.$editSerenaConfigCancelBtn = $('#edit-serena-config-cancel-btn');
         this.$newsSection = $('#news-section');
         this.$newsDisplay = $('#news-display');
+        this.$logProjectFilter = $('#log-project-filter');
+        this.$logSessionFilter = $('#log-session-filter');
+        this.$logLevelFilter = $('#log-level-filter');
+        this.$logFilterReset = $('#log-filter-reset');
     }
 
     bindEvents() {
@@ -397,6 +425,29 @@ class Dashboard {
         });
         this.$editMemoryRenameInput.on('blur', function () {
             self.cancelMemoryRename();
+        });
+
+        this.$logProjectFilter.on('change', () => {
+            this.logFilters.projectName = this.$logProjectFilter.val() || '';
+            this.loadLogs();
+        });
+
+        this.$logSessionFilter.on('change', () => {
+            this.logFilters.sessionId = this.$logSessionFilter.val() || '';
+            this.loadLogs();
+        });
+
+        this.$logLevelFilter.on('change', () => {
+            this.logFilters.level = this.$logLevelFilter.val() || '';
+            this.loadLogs();
+        });
+
+        this.$logFilterReset.click(() => {
+            this.logFilters = { projectName: '', sessionId: '', level: '' };
+            this.$logProjectFilter.val('');
+            this.$logSessionFilter.val('');
+            this.$logLevelFilter.val('');
+            this.loadLogs();
         });
         this.$deleteMemoryOkBtn.click(this.confirmDeleteMemoryOk.bind(this));
         this.$deleteMemoryCancelBtn.click(this.closeDeleteMemoryModal.bind(this));
@@ -553,7 +604,22 @@ class Dashboard {
                     self.lastConfigDataJson = currentConfigJson;
                     self.configData = response;
                     self.jetbrainsMode = response.jetbrains_mode;
-                    self.activeProjectName = response.active_project.name;
+                    self.activeSessions = response.active_sessions || [];
+                    self.updateLogFilterOptions(response);
+
+                    // Set active project name - prefer new active_projects array, fallback to backward compat
+                    const activeProjects = response.active_projects || [];
+                    if (activeProjects.length > 0) {
+                        // If we already have an active project name and it exists in the list, keep it
+                        // Otherwise, default to the first project
+                        const existingProject = activeProjects.find(p => p.name === self.activeProjectName);
+                        if (!existingProject) {
+                            self.activeProjectName = activeProjects[0].name;
+                        }
+                    } else {
+                        // Fallback to backward compat single project
+                        self.activeProjectName = response.active_project ? response.active_project.name : null;
+                    }
                     
                     if (self.currentPage === 'overview') {
                         self.displayConfig(response);
@@ -562,6 +628,7 @@ class Dashboard {
                         self.displayAvailableTools(response.available_tools);
                         self.displayAvailableModes(response.available_modes);
                         self.displayAvailableContexts(response.available_contexts);
+                        self.displaySessions(self.activeSessions);
                     }
                     if (self.currentPage === 'active-projects') {
                         self.displayActiveProjects(response.active_projects || []);
@@ -611,30 +678,94 @@ class Dashboard {
             const wasToolsExpanded = $existingToolsContent.is(':visible');
             const wasMemoriesExpanded = $existingMemoriesContent.is(':visible');
 
-            let html = '<div class="config-grid">';
+            // Get active projects array (new backend format) or fallback to single project
+            const activeProjects = config.active_projects || [];
+            const hasMultipleProjects = activeProjects.length > 1;
+            
+            // Determine which project to display
+            // If we have multiple projects, use the selected one or default to first
+            // If single project, use the backward compat active_project
+            let selectedProject = null;
+            if (hasMultipleProjects) {
+                // Try to find the currently selected project by name
+                const foundProject = activeProjects.find(p => p.name === this.activeProjectName);
+                selectedProject = foundProject || activeProjects[0];
+                this.activeProjectName = selectedProject.name;
+            } else if (activeProjects.length === 1) {
+                selectedProject = activeProjects[0];
+                this.activeProjectName = selectedProject.name;
+            } else {
+                // Fallback to backward compat single project
+                selectedProject = config.active_project;
+                this.activeProjectName = config.active_project ? config.active_project.name : null;
+            }
+
+            let html = '';
 
             // Version badge
             $('#version-badge').text('v' + config.serena_version);
 
-            // Project info
-            html += '<div class="config-label">Active Project</div>';
-            if (config.active_project.name && config.active_project.path) {
-                const configPath = config.active_project.path + '/.serena/project.yml';
-                html += '<div class="config-value" title="Project configuration in ' + configPath + '">' + config.active_project.name + '</div>';
-            } else {
-                html += '<div class="config-value">' + (config.active_project.name || 'None') + '</div>';
+            // Project Summary Header (shows count of active projects)
+            if (activeProjects.length > 0) {
+                html += '<div class="projects-summary">';
+                html += '<div class="projects-count">';
+                html += '<span class="count-badge">' + activeProjects.length + '</span>';
+                html += '<span class="count-label">Active Project' + (activeProjects.length > 1 ? 's' : '') + '</span>';
+                html += '</div>';
+                html += '<div class="projects-names">';
+                activeProjects.forEach(function (project, index) {
+                    if (index > 0) html += '<span class="names-separator">•</span>';
+                    const isSelected = project.name === (selectedProject && selectedProject.name);
+                    html += '<span class="project-name-tag' + (isSelected ? ' selected' : '') + '" title="' + project.path + '">' + project.name + '</span>';
+                });
+                html += '</div>';
+                html += '</div>';
             }
 
-            // Languages
+            // Project Selector Tabs (only if multiple projects)
+            if (hasMultipleProjects) {
+                html += '<div class="project-tabs">';
+                activeProjects.forEach(function (project) {
+                    const isSelected = project.name === (selectedProject && selectedProject.name);
+                    const lspIndicator = project.lsp_running ? '<span class="lsp-indicator running" title="LSP Running"></span>' : '<span class="lsp-indicator stopped" title="LSP Stopped"></span>';
+                    html += '<button class="project-tab' + (isSelected ? ' active' : '') + '" data-project-name="' + project.name + '">';
+                    html += lspIndicator;
+                    html += '<span class="tab-name">' + project.name + '</span>';
+                    html += '</button>';
+                });
+                html += '</div>';
+            }
+
+            // Selected Project Configuration
+            html += '<div class="config-grid">';
+
+            // Selected Project info
+            html += '<div class="config-label">Selected Project</div>';
+            if (selectedProject && selectedProject.name && selectedProject.path) {
+                const configPath = selectedProject.path + '/.serena/project.yml';
+                let projectDisplay = '<div class="config-value project-value">';
+                projectDisplay += '<span class="project-name-main" title="Project configuration in ' + configPath + '">' + selectedProject.name + '</span>';
+                if (selectedProject.read_only) {
+                    projectDisplay += '<span class="read-only-badge">Read-Only</span>';
+                }
+                projectDisplay += '</div>';
+                html += projectDisplay;
+            } else {
+                html += '<div class="config-value">' + ((selectedProject && selectedProject.name) || 'None') + '</div>';
+            }
+
+            // Languages (per-project)
             html += '<div class="config-label">Languages</div>';
             if (this.jetbrainsMode) {
                 html += '<div class="config-value">Using JetBrains backend</div>';
             } else {
                 html += '<div class="config-value">';
-                if (config.languages && config.languages.length > 0) {
+                const rawLanguages = selectedProject && selectedProject.languages ? selectedProject.languages : config.languages;
+                const projectLanguages = Array.isArray(rawLanguages) ? rawLanguages : (rawLanguages ? rawLanguages.split(', ') : []);
+                if (projectLanguages.length > 0) {
                     html += '<div class="languages-container">';
-                    config.languages.forEach(function (language, index) {
-                        const isRemovable = config.languages.length > 1;
+                    projectLanguages.forEach(function (language, index) {
+                        const isRemovable = projectLanguages.length > 1;
                         html += '<div class="language-badge' + (isRemovable ? ' removable' : '') + '">';
                         html += language;
                         if (isRemovable) {
@@ -642,7 +773,7 @@ class Dashboard {
                         }
                         html += '</div>';
                     });
-                    if (config.active_project && config.active_project.name) {
+                    if (selectedProject && selectedProject.name) {
                         if (this.isAddingLanguage) {
                             html += '<div id="add-language-spinner" class="language-spinner"><div class="spinner"></div></div>';
                         } else {
@@ -657,11 +788,56 @@ class Dashboard {
                 html += '</div>';
             }
 
-            // Context info
+            // LSP Status (per-project)
+            if (selectedProject && selectedProject.lsp_running !== undefined) {
+                html += '<div class="config-label">LSP Status</div>';
+                const lspStatus = selectedProject.lsp_running ? 'Running' : 'Stopped';
+                const lspStatusClass = selectedProject.lsp_running ? 'status-running' : 'status-stopped';
+                html += '<div class="config-value"><span class="lsp-status-badge ' + lspStatusClass + '">' + lspStatus + '</span></div>';
+            }
+
+            // File Encoding (per-project)
+            html += '<div class="config-label">File Encoding</div>';
+            const projectEncoding = selectedProject && selectedProject.encoding ? selectedProject.encoding : config.encoding;
+            html += '<div class="config-value">' + (projectEncoding || 'N/A') + '</div>';
+
+            html += '</div>';
+
+            // Available memories - collapsible (per-project)
+            if (selectedProject && selectedProject.name) {
+                const projectMemories = selectedProject.memories || config.available_memories || [];
+                html += '<div style="margin-top: 10px;">';
+                html += '<h3 class="collapsible-header" id="memories-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
+                const memoryCount = projectMemories.length;
+                html += '<span style="font-weight: 600; color: var(--text-secondary);">Available Memories (' + memoryCount + ')</span>';
+                html += '<span class="toggle-icon' + (wasMemoriesExpanded ? ' expanded' : '') + '">';
+                html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
+                html += '</span>';
+                html += '</h3>';
+                html += '<div class="collapsible-content memories-container" id="memories-content" style="' + (wasMemoriesExpanded ? '' : 'display:none;') + ' margin-top: 10px; padding-bottom: 10px;">';
+                if (projectMemories.length > 0) {
+                    projectMemories.forEach(function (memory) {
+                        html += '<div class="memory-item removable" data-memory="' + memory + '">';
+                        html += memory;
+                        html += '<span class="memory-remove" data-memory="' + memory + '">&times;</span>';
+                        html += '</div>';
+                    });
+                }
+                html += '<button id="create-memory-btn" class="memory-add-btn">+ Add Memory</button>';
+                html += '</div>';
+                html += '</div>';
+            }
+
+            // Shared Configuration Section
+            html += '<div style="margin-top: 20px; padding-top: 16px; border-top: 2px solid var(--border-color);">';
+            html += '<h3 style="font-size: 13px; font-weight: 600; color: var(--text-muted); margin: 0 0 16px 0; text-transform: uppercase; letter-spacing: 0.5px;">Shared Configuration</h3>';
+            html += '<div class="config-grid">';
+
+            // Context info (shared)
             html += '<div class="config-label">Context</div>';
             html += '<div class="config-value" title="' + config.context.path + '">' + config.context.name + '</div>';
 
-            // Modes info
+            // Modes info (shared)
             html += '<div class="config-label">Active Modes</div>';
             html += '<div class="config-value">';
             if (config.modes.length > 0) {
@@ -674,13 +850,10 @@ class Dashboard {
             }
             html += '</div>';
 
-            // File Encoding info
-            html += '<div class="config-label">File Encoding</div>';
-            html += '<div class="config-value">' + (config.encoding || 'N/A') + '</div>';
-
+            html += '</div>';
             html += '</div>';
 
-            // Active tools - collapsible
+            // Active tools - collapsible (shared)
             html += '<div style="margin-top: 20px;">';
             html += '<h3 class="collapsible-header" id="tools-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
             html += '<span style="font-weight: 600; color: var(--text-secondary);">Active Tools (' + config.active_tools.length + ')</span>';
@@ -695,30 +868,6 @@ class Dashboard {
             html += '</div>';
             html += '</div>';
 
-            // Available memories - collapsible
-            if (config.active_project && config.active_project.name) {
-                html += '<div style="margin-top: 10px;">';
-                html += '<h3 class="collapsible-header" id="memories-header" style="font-size: 14px; margin: 0; cursor: pointer; display: flex; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border-color);">';
-                const memoryCount = (config.available_memories && config.available_memories.length) || 0;
-                html += '<span style="font-weight: 600; color: var(--text-secondary);">Available Memories (' + memoryCount + ')</span>';
-                html += '<span class="toggle-icon' + (wasMemoriesExpanded ? ' expanded' : '') + '">';
-                html += '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"></polyline></svg>';
-                html += '</span>';
-                html += '</h3>';
-                html += '<div class="collapsible-content memories-container" id="memories-content" style="' + (wasMemoriesExpanded ? '' : 'display:none;') + ' margin-top: 10px; padding-bottom: 10px;">';
-                if (config.available_memories && config.available_memories.length > 0) {
-                    config.available_memories.forEach(function (memory) {
-                        html += '<div class="memory-item removable" data-memory="' + memory + '">';
-                        html += memory;
-                        html += '<span class="memory-remove" data-memory="' + memory + '">&times;</span>';
-                        html += '</div>';
-                    });
-                }
-                html += '<button id="create-memory-btn" class="memory-add-btn">+ Add Memory</button>';
-                html += '</div>';
-                html += '</div>';
-            }
-
             // Configuration help link and edit config button
             html += '<div style="margin-top: 20px; padding-top: 16px; border-top: 1px solid var(--border-color); display: flex; gap: 10px; align-items: center;">';
             html += '<div style="flex: 1; padding: 12px; background: var(--bg-primary); border-radius: 8px; font-size: 13px; border: 1px solid var(--border-color);">';
@@ -732,6 +881,15 @@ class Dashboard {
 
             // Attach event handlers
             const self = this;
+            
+            // Project tab click handlers
+            $('.project-tab').click(function () {
+                const projectName = $(this).data('project-name');
+                self.activeProjectName = projectName;
+                // Re-render to show selected project
+                self.displayConfig(self.configData);
+            });
+
             $('#add-language-btn').click(this.openLanguageModal.bind(this));
             $('#edit-serena-config-btn').click(this.openEditSerenaConfigModal.bind(this));
             
@@ -825,6 +983,85 @@ class Dashboard {
         this.$projectsDisplay.html(html);
     }
 
+    populateSelectOptions($select, placeholder, items, selectedValue) {
+        if (!$select || $select.length === 0) return;
+        const currentValue = selectedValue || '';
+        $select.empty();
+        $select.append($('<option>').val('').text(placeholder));
+        items.forEach(item => {
+            if (!item) return;
+            const value = typeof item === 'string' ? item : item.value;
+            const label = typeof item === 'string' ? item : item.label;
+            $select.append($('<option>').val(value).text(label));
+        });
+        $select.val(currentValue);
+    }
+
+    updateLogFilterOptions(config) {
+        if (!this.$logProjectFilter || !this.$logSessionFilter) return;
+        const projectNames = new Set();
+        (config.active_projects || []).forEach(project => {
+            if (project && project.name) {
+                projectNames.add(project.name);
+            }
+        });
+        const sortedProjects = Array.from(projectNames).sort();
+        if (!sortedProjects.includes(this.logFilters.projectName)) {
+            this.logFilters.projectName = '';
+        }
+        this.populateSelectOptions(this.$logProjectFilter, 'All projects', sortedProjects, this.logFilters.projectName);
+        this.logFilters.projectName = this.$logProjectFilter.val() || '';
+
+        const sessions = config.active_sessions || [];
+        const sessionOptions = sessions.map(session => {
+            const parts = [session.session_id];
+            if (session.project_name) parts.push(`– ${session.project_name}`);
+            if (session.client_info) parts.push(`(${session.client_info})`);
+            return { value: session.session_id, label: parts.join(' ') };
+        });
+        if (!sessionOptions.some(option => option.value === this.logFilters.sessionId)) {
+            this.logFilters.sessionId = '';
+        }
+        this.populateSelectOptions(this.$logSessionFilter, 'All sessions', sessionOptions, this.logFilters.sessionId);
+        this.logFilters.sessionId = this.$logSessionFilter.val() || '';
+    }
+
+    displaySessions(sessions) {
+        if (!this.$sessionsDisplay || this.$sessionsDisplay.length === 0) return;
+        if (!sessions || sessions.length === 0) {
+            this.$sessionsDisplay.html('<div class="empty-state small"><span class="empty-text">No active sessions</span></div>');
+            return;
+        }
+
+        let html = '<div class="session-list">';
+        sessions.forEach(session => {
+            const projectName = session.project_name || 'Unbound';
+            const idle = this.formatIdleTime(session.idle_seconds || 0);
+            const client = session.client_info || 'Unknown client';
+            const tags = [];
+            if (session.context_name) tags.push(`context: ${session.context_name}`);
+            if (session.persona_name) tags.push(`persona: ${session.persona_name}`);
+            if (session.backend_hint) tags.push(`backend: ${session.backend_hint}`);
+
+            html += '<div class="session-item">';
+            html += `<div class="session-id" title="${this.escapeHtml(session.session_id)}">${this.escapeHtml(session.session_id)}</div>`;
+            html += '<div class="session-meta">';
+            html += `<span>Project: ${this.escapeHtml(projectName)}</span>`;
+            html += `<span>Idle: ${this.escapeHtml(idle)}</span>`;
+            html += `<span>Client: ${this.escapeHtml(client)}</span>`;
+            html += '</div>';
+            if (tags.length > 0) {
+                html += '<div class="session-tags">'
+                    + tags.map(tag => `<span class="session-tag">${this.escapeHtml(tag)}</span>`).join('')
+                    + '</div>';
+            }
+            html += '</div>';
+        });
+        html += '</div>';
+
+        this.$sessionsDisplay.html(html);
+    }
+
     // ===== Active Projects Methods =====
 
     loadActiveProjects() {
@@ -874,7 +1111,10 @@ class Dashboard {
             html += '</div>';
             html += '<div class="active-project-path" title="' + self.escapeHtml(project.path || '') + '">' + self.escapeHtml(project.path || 'N/A') + '</div>';
             html += '<div class="active-project-details">';
-            html += '<div class="detail-row"><span class="detail-label">Languages</span><span class="detail-value">' + self.escapeHtml(project.languages || 'N/A') + '</span></div>';
+            const languagesDisplay = project.languages
+                ? (Array.isArray(project.languages) ? project.languages.join(', ') : project.languages)
+                : 'N/A';
+            html += '<div class="detail-row"><span class="detail-label">Languages</span><span class="detail-value">' + self.escapeHtml(languagesDisplay) + '</span></div>';
             html += '<div class="detail-row"><span class="detail-label">Last Active</span><span class="detail-value">' + idleText + '</span></div>';
             html += '</div>';
             html += '</div>';
@@ -1185,8 +1425,22 @@ class Dashboard {
 
     // ===== Logs Methods =====
 
-    displayLogMessage(message) {
-        this.$logContainer.append(new LogMessage(message, this.toolNames).$elem);
+    getLogRequestPayload(startIdx) {
+        const payload = { start_idx: startIdx };
+        if (this.logFilters.projectName) {
+            payload.project_name = this.logFilters.projectName;
+        }
+        if (this.logFilters.sessionId) {
+            payload.session_id = this.logFilters.sessionId;
+        }
+        if (this.logFilters.level) {
+            payload.levels = [this.logFilters.level];
+        }
+        return payload;
+    }
+
+    displayLogMessage(entry) {
+        this.$logContainer.append(new LogMessage(entry, this.toolNames).$elem);
     }
 
     loadToolNames() {
@@ -1274,11 +1528,18 @@ class Dashboard {
 
         self.$errorContainer.empty();
 
+        if (self.pollInterval) {
+            clearInterval(self.pollInterval);
+            self.pollInterval = null;
+        }
+
+        self.currentMaxIdx = -1;
+
         $.ajax({
             url: '/get_log_messages',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ start_idx: 0 }),
+            data: JSON.stringify(self.getLogRequestPayload(0)),
             success: function (response) {
                 self.$logContainer.empty();
                 self.currentMaxIdx = response.max_idx || -1;
@@ -1312,7 +1573,7 @@ class Dashboard {
             url: '/get_log_messages',
             type: 'POST',
             contentType: 'application/json',
-            data: JSON.stringify({ start_idx: self.currentMaxIdx + 1 }),
+            data: JSON.stringify(self.getLogRequestPayload(self.currentMaxIdx + 1)),
             success: function (response) {
                 if (response.messages && response.messages.length > 0) {
                     let wasAtBottom = false;
@@ -1658,9 +1919,27 @@ class Dashboard {
     }
 
     openLanguageModal() {
-        this.$modalProjectName.text(this.activeProjectName || 'Unknown');
+        // Use the currently selected project from the config
+        const selectedProject = this.getSelectedProject();
+        const projectName = selectedProject ? selectedProject.name : (this.activeProjectName || 'Unknown');
+        this.$modalProjectName.text(projectName);
         this.loadAvailableLanguages();
         this.$addLanguageModal.fadeIn(200);
+    }
+
+    getSelectedProject() {
+        // Get the currently selected project from the config data
+        if (!this.configData) return null;
+        
+        const activeProjects = this.configData.active_projects || [];
+        if (activeProjects.length === 0) {
+            // Fallback to backward compat
+            return this.configData.active_project;
+        }
+        
+        // Find the project matching the active project name
+        const foundProject = activeProjects.find(p => p.name === this.activeProjectName);
+        return foundProject || activeProjects[0];
     }
 
     closeLanguageModal() {
@@ -1920,7 +2199,10 @@ class Dashboard {
     }
 
     openCreateMemoryModal() {
-        this.$createMemoryProjectName.text(this.activeProjectName || 'Unknown');
+        // Use the currently selected project from the config
+        const selectedProject = this.getSelectedProject();
+        const projectName = selectedProject ? selectedProject.name : (this.activeProjectName || 'Unknown');
+        this.$createMemoryProjectName.text(projectName);
         this.$createMemoryNameInput.val('');
         this.$createMemoryModal.fadeIn(200);
         setTimeout(() => {

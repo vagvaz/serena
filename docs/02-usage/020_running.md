@@ -52,6 +52,23 @@ case, you can simply run the `start-mcp-server` command without any additional o
 See the section ["Configuring Your MCP Client"](030_clients) for specific information on how to configure your MCP client (e.g. Claude Code, Codex, Cursor, etc.)
 to use such a launch command.
 
+(daemon-mode)=
+### Daemon Mode (SSE)
+
+For long-running setups where multiple clients connect to a single Serena instance, use daemon mode:
+
+```bash
+serena start-mcp-server --daemon --daemon-port 8765 --auto-register
+```
+
+- `--daemon`: keeps the server running as a background process with SSE transport.
+- `--daemon-port`: port for the SSE endpoint (default `8765`).
+- `--auto-register`: automatically registers previously unseen project paths provided during session handshake.
+
+Clients connect to `http://127.0.0.1:8765/sse`. Each client gets its own session with isolated project, context, persona, and tool visibility settings via the `session_init` handshake tool.
+
+Stop the daemon with `serena daemon-stop`.
+
 (streamable-http)=
 ### Streamable HTTP Mode
 
@@ -69,11 +86,11 @@ and then configure your client to connect to `http://localhost:9121/mcp`.
 By default, only connections from localhost are allowed; pass the `--host <listen_address>` option to configure
 the listen address and allow remote connections if needed (but be aware of the security implications of doing so).
 
-**When to use.** Note that Serena is a stateful MCP server, and only one coding project can be active at a time.
-Therefore, starting a single Serena instance and connecting it to multiple clients is only 
-appropriate if all clients will be working on the same project.  
-If you want several agents to work on different projects, making each client/agent start its own server
-in stdio mode is likely the best option.
+**When to use.** Note that Serena is a stateful MCP server. In stdio mode, each client gets its own isolated instance.
+In daemon mode, multiple clients share a single Serena instance but get isolated sessions with per-session project binding,
+context/persona overrides, and tool visibility. See the [Daemon Mode](daemon-mode) section above.
+If you want several agents to work on different projects, you can either make each client start its own server
+in stdio mode, or use daemon mode with session isolation.
 See section [The Project Workflow](040_workflow) for more information on how to manage projects in Serena.
 
 The legacy SSE transport is also supported (via `--transport sse` with corresponding /sse endpoint), its use is discouraged.

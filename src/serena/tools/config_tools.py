@@ -48,9 +48,18 @@ class ActivateProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
 
         :param project: the name of a registered project to activate or a path to a project directory
         """
+        from serena.tools.tools_base import get_current_session_id
+
         is_new_activation = self.agent.activate_project_from_path_or_name(project)
-        mark_used(is_new_activation)
-        result = self.agent.get_project_activation_message(session_id)
+        if not is_new_activation:
+            result = "Project was already active."
+        else:
+            result = self.agent.get_project_activation_message()
+            # Bind the current session to the newly activated project
+            session_id = get_current_session_id()
+            if session_id:
+                project_instance = self.agent.get_active_project_or_raise()
+                self.agent.get_session_manager().set_project(session_id, project_instance.project_name)
         result += "\nIMPORTANT: If you have not yet read the 'Serena Instructions Manual', do it now before continuing!"
         return result
 

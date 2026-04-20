@@ -3,6 +3,7 @@ import glob
 import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import time
@@ -298,6 +299,32 @@ class TopLevelCommands(AutoRegisteringGroup):
         default=False,
         help="Auto-detect project from current working directory (searches for .serena/project.yml or .git, falls back to CWD). Intended for CLI-based agents like Claude Code, Gemini and Codex.",
     )
+    @click.option(
+        "--daemon",
+        is_flag=True,
+        default=False,
+        help="Run as a persistent background daemon. Uses SSE transport on a fixed port. Multiple clients can connect to the same instance.",
+    )
+    @click.option(
+        "--daemon-port",
+        type=int,
+        default=8765,
+        show_default=True,
+        help="Port for the daemon SSE server (only used with --daemon).",
+    )
+    @click.option(
+        "--daemon-child",
+        is_flag=True,
+        default=False,
+        hidden=True,
+        help="Internal flag set when spawning a daemon subprocess. Do not use manually.",
+    )
+    @click.option(
+        "--auto-register",
+        is_flag=True,
+        default=False,
+        help="Automatically register previously unseen project paths provided during session handshake. Requires --daemon.",
+    )
     def start_mcp_server(
         project: str | None,
         project_file_arg: str | None,
@@ -314,6 +341,10 @@ class TopLevelCommands(AutoRegisteringGroup):
         log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] | None,
         trace_lsp_communication: bool | None,
         tool_timeout: float | None,
+        daemon: bool,
+        daemon_port: int,
+        daemon_child: bool,
+        auto_register: bool,
     ) -> None:
         # initialize logging, using INFO level initially (will later be adjusted by SerenaAgent according to the config)
         #   * memory log handler (for use by GUI/Dashboard)
@@ -335,6 +366,20 @@ class TopLevelCommands(AutoRegisteringGroup):
         log.info("Initializing Serena MCP server")
         log.info("Storing logs in %s", log_path)
 
+        # Daemon child process: write PID file
+        if daemon_child:
+            pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
+            os.makedirs(os.path.dirname(pid_file), exist_ok=True)
+            with open(pid_file, "w") as f:
+                f.write(str(os.getpid()))
+            log.info("Daemon child process started (PID %d)", os.getpid())
+
+        # Handle --daemon flag: override transport/port for persistent server mode
+        if daemon:
+            transport = "sse"
+            port = daemon_port
+            host = "127.0.0.1"
+
         # Handle --project-from-cwd flag
         if project_from_cwd:
             if project is not None or project_file_arg is not None:
@@ -346,7 +391,15 @@ class TopLevelCommands(AutoRegisteringGroup):
                 log.warning("No project root found from %s; not activating any project", os.getcwd())
 
         project_file = project_file_arg or project
-        factory = SerenaMCPFactory(context=context, project=project_file, memory_log_handler=memory_log_handler)
+        if auto_register and not (daemon or daemon_child):
+            raise click.UsageError("--auto-register can only be used together with --daemon.")
+
+        factory = SerenaMCPFactory(
+            context=context,
+            project=project_file,
+            memory_log_handler=memory_log_handler,
+            auto_register_projects=auto_register,
+        )
         server = factory.create_mcp_server(
             host=host,
             port=port,
@@ -364,8 +417,219 @@ class TopLevelCommands(AutoRegisteringGroup):
                 "Positional project arg is deprecated; use --project instead. Used: %s",
                 project_file,
             )
+
+        # Daemon child: register signal handlers for graceful agent shutdown
+        if daemon_child and factory.agent is not None:
+            def _cleanup_pid(signum: int, frame: Any) -> None:
+                try:
+                    if factory.agent is not None:
+                        log.info("Daemon signal received, shutting down agent...")
+                        factory.agent.on_shutdown()
+                    os.remove(pid_file)
+                except OSError:
+                    pass
+                sys.exit(0)
+
+            signal.signal(signal.SIGTERM, _cleanup_pid)
+            signal.signal(signal.SIGINT, _cleanup_pid)
+
+        # Daemon mode: spawn a background subprocess
+        if daemon:
+            _start_daemon(
+                port=port,
+                log_path=log_path,
+                context=context,
+                project_file=project_file,
+                modes=modes,
+                language_backend=language_backend,
+                enable_web_dashboard=enable_web_dashboard,
+                open_web_dashboard=open_web_dashboard,
+                enable_gui_log_window=enable_gui_log_window,
+                log_level=log_level,
+                trace_lsp_communication=trace_lsp_communication,
+                tool_timeout=tool_timeout,
+                auto_register=auto_register,
+            )
+            return
+
         log.info("Starting MCP server …")
         server.run(transport=transport)
+
+    @staticmethod
+    @click.command("daemon-status", help="Check if the Serena daemon is running.")
+    def daemon_status() -> None:
+        """Check if the Serena daemon is running."""
+        pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
+        if not os.path.exists(pid_file):
+            click.echo("Serena daemon is not running.")
+            click.echo("Start it with: serena start-mcp-server --daemon")
+            return
+
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+
+        # Check if process is actually running
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            click.echo(f"Stale PID file found (PID {pid}). Daemon is not running.")
+            os.remove(pid_file)
+            click.echo("Cleaned up stale PID file.")
+            return
+
+        click.echo(f"Serena daemon is running (PID {pid}).")
+        click.echo("  Endpoint: http://127.0.0.1:8765/mcp")
+        click.echo("Stop it with: serena daemon-stop")
+
+    @staticmethod
+    @click.command("daemon-stop", help="Stop the running Serena daemon.")
+    def daemon_stop() -> None:
+        """Stop the running Serena daemon."""
+        pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
+        if not os.path.exists(pid_file):
+            click.echo("Serena daemon is not running (no PID file found).")
+            return
+
+        with open(pid_file) as f:
+            pid = int(f.read().strip())
+
+        try:
+            os.kill(pid, 0)
+        except OSError:
+            click.echo(f"Stale PID file found (PID {pid}). Daemon is not running.")
+            os.remove(pid_file)
+            return
+
+        click.echo(f"Stopping Serena daemon (PID {pid})...")
+        try:
+            os.kill(pid, signal.SIGTERM)
+            # Wait up to 5 seconds for graceful shutdown
+            for _ in range(50):
+                try:
+                    os.kill(pid, 0)
+                    time.sleep(0.1)
+                except OSError:
+                    break
+            else:
+                # Force kill if still running
+                click.echo("Daemon did not stop gracefully, sending SIGKILL...")
+                os.kill(pid, signal.SIGKILL)
+                time.sleep(0.5)
+        except OSError as e:
+            click.echo(f"Error stopping daemon: {e}")
+            return
+
+        # Clean up PID file
+        try:
+            os.remove(pid_file)
+        except OSError:
+            pass
+        click.echo("Serena daemon stopped.")
+
+
+def _start_daemon(
+    port: int,
+    log_path: str,
+    context: str,
+    project_file: str | None,
+    modes: Sequence[str],
+    language_backend: str | None,
+    enable_web_dashboard: bool | None,
+    open_web_dashboard: bool | None,
+    enable_gui_log_window: bool | None,
+    log_level: str | None,
+    trace_lsp_communication: bool | None,
+    tool_timeout: float | None,
+    auto_register: bool,
+) -> None:
+    """Start the daemon by spawning a new subprocess. Avoids fork() asyncio issues."""
+    pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
+
+    # Check if daemon is already running
+    if os.path.exists(pid_file):
+        with open(pid_file) as f:
+            existing_pid = int(f.read().strip())
+        try:
+            os.kill(existing_pid, 0)
+            click.echo(f"Serena daemon is already running (PID {existing_pid}).")
+            click.echo(f"  Endpoint: http://127.0.0.1:{port}/mcp")
+            click.echo("Stop it with: serena daemon-stop")
+            sys.exit(0)
+        except OSError:
+            # Stale PID file, clean up
+            os.remove(pid_file)
+
+    # Build the command for the daemon subprocess
+    # Use the 'serena' CLI entry point
+    serena_exe = shutil.which("serena")
+    if serena_exe is None:
+        # Fallback: use sys.executable with the serena CLI module
+        serena_exe = sys.executable
+        cmd = [serena_exe, "-m", "serena.cli", "start-mcp-server"]
+    else:
+        cmd = [serena_exe, "start-mcp-server"]
+
+    cmd.extend([
+        "--context", context,
+        "--transport", "sse",
+        "--host", "127.0.0.1",
+        "--port", str(port),
+        "--daemon-child",
+    ])
+    if project_file:
+        cmd.extend(["--project", project_file])
+    for mode in modes:
+        cmd.extend(["--mode", mode])
+    if language_backend:
+        cmd.extend(["--language-backend", language_backend])
+    if enable_web_dashboard is not None:
+        cmd.extend(["--enable-web-dashboard", str(enable_web_dashboard)])
+    if open_web_dashboard is not None:
+        cmd.extend(["--open-web-dashboard", str(open_web_dashboard)])
+    if enable_gui_log_window is not None:
+        cmd.extend(["--enable-gui-log-window", str(enable_gui_log_window)])
+    if log_level:
+        cmd.extend(["--log-level", log_level])
+    if trace_lsp_communication is not None:
+        cmd.extend(["--trace-lsp-communication", str(trace_lsp_communication)])
+    if tool_timeout is not None:
+        cmd.extend(["--tool-timeout", str(tool_timeout)])
+    if auto_register:
+        cmd.append("--auto-register")
+
+    # Spawn the daemon subprocess
+    log_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon_startup.log")
+    with open(log_file, "w") as stderr_log:
+        process = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=stderr_log,
+            start_new_session=True,
+        )
+
+    # Wait for the daemon to start and write its PID file
+    for attempt in range(30):
+        time.sleep(0.5)
+        if os.path.exists(pid_file):
+            with open(pid_file) as f:
+                daemon_pid = int(f.read().strip())
+            click.echo(f"Serena daemon started (PID {daemon_pid}).")
+            break
+    else:
+        click.echo("Daemon failed to start (no PID file written after 15s).")
+        click.echo(f"  Check log: {log_path}")
+        click.echo(f"  Stderr: {log_file}")
+        try:
+            process.kill()
+        except OSError:
+            pass
+        sys.exit(1)
+
+    click.echo(f"  Endpoint: http://127.0.0.1:{port}/mcp")
+    click.echo("Stop it with: serena daemon-stop")
+    sys.exit(0)
+
 
     @staticmethod
     @click.command(
