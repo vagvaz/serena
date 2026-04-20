@@ -129,19 +129,18 @@ class TestResolveSessionProject:
         serena_agent_with_project._session_projects["sess-1"] = "test_project"
 
         result = serena_agent_with_project.resolve_session_project("sess-1", None)
-        # Should return the project via fallback to get_active_project()
+        # Should return the project via session cache
         assert result is not None
 
-    def test_resolve_falls_back_to_first_active_project(self, serena_agent_with_project):
-        """Should fall back to first active project when no session info."""
+    def test_resolve_returns_none_when_no_session_info(self, serena_agent_with_project):
+        """Should return None when no session info is available (no data bleeding)."""
         result = serena_agent_with_project.resolve_session_project(None, None)
-        assert result is not None
-        assert result.project_name == "test_project"
+        assert result is None
 
     def test_resolve_with_none_session_id(self, serena_agent_with_project):
-        """Should work when session_id is None (backward compat)."""
+        """Should return None when session_id is None and no cwd is provided."""
         result = serena_agent_with_project.resolve_session_project(None, None)
-        assert result is not None
+        assert result is None
 
     def test_resolve_session_project_cwd_takes_precedence_over_session_binding(
         self, serena_agent_with_project, serena_config

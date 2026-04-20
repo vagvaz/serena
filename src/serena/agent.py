@@ -988,7 +988,7 @@ class SerenaAgent:
            and cache the result for the session
         2. Fall back to session manager's project binding
         3. Fall back to the session-cached project name
-        4. Fall back to the first active project (backward compatibility)
+        4. Return None if no project can be determined
 
         :param session_id: the MCP session/client identifier
         :param cwd: the current working directory of the tool call
@@ -1020,8 +1020,10 @@ class SerenaAgent:
                 if project:
                     return project
 
-        # Step 4: Fall back to first active project (backward compat)
-        return self.get_active_project()
+        # Step 4: No project could be resolved — return None
+        # The caller (apply_ex) handles None by returning an error message
+        # asking the user to specify a project.
+        return None
 
     def get_session_project(self, session_id: str) -> Project | None:
         """
@@ -1123,8 +1125,11 @@ class SerenaAgent:
             if activated_project is None and os.path.isdir(activation_target):
                 activated_project = self.resolve_project_for_path(os.path.abspath(activation_target))
             if activated_project is None:
-                # Fall back to first active project if ambiguous
-                activated_project = self.get_active_project()
+                # Do not fall back to an arbitrary active project —
+                # that would bind this session to the wrong project.
+                # Leave the session unbound; the caller will get a clear
+                # error when they try to use a project-requiring tool.
+                pass
             if activated_project is not None:
                 canonical_name = activated_project.project_name
                 self._session_projects[session_id] = canonical_name
