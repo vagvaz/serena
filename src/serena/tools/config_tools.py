@@ -64,6 +64,50 @@ class ActivateProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
         return result
 
 
+class SetSessionProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
+    """
+    Sets the project binding for the current session.
+    Accepts either a registered project name or a filesystem path to a project root.
+    """
+
+    def apply(self, project: str) -> str:
+        """
+        Sets the project binding for the current session.
+        The project can be specified as either a registered project name or a path to a project directory.
+        This does NOT activate the project globally — it only binds the current session to it.
+        If the project is not already active, it will be activated first.
+
+        :param project: the name of a registered project or a path to a project directory
+        """
+        from serena.tools.tools_base import get_current_session_id
+
+        session_id = get_current_session_id()
+        if session_id is None:
+            return "Error: Setting session project requires an MCP connection context."
+
+        # Try to activate the project if not already active
+        try:
+            was_new = self.agent.activate_project_from_path_or_name(project)
+        except Exception as exc:
+            return f"Error: Failed to activate project '{project}': {exc}"
+
+        # Resolve the canonical project name
+        project_instance = self.agent.serena_config.get_project(project)
+        if project_instance is None:
+            project_instance = self.agent.resolve_project_for_path(project)
+        if project_instance is None:
+            return f"Error: Could not resolve project from '{project}'."
+
+        canonical_name = project_instance.project_name
+        self.agent._session_projects[session_id] = canonical_name
+        self.agent.get_session_manager().set_project(session_id, canonical_name)
+
+        msg = f"Session bound to project '{canonical_name}'."
+        if was_new:
+            msg += " Project was activated."
+        return msg
+
+
 class DeactivateProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject, ToolMarkerOptional):
     """
     Deactivates a project, shutting down its language server and freeing resources.

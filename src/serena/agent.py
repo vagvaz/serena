@@ -55,6 +55,7 @@ from serena.tools import (
     OpenDashboardTool,
     ReadMemoryTool,
     ReplaceContentTool,
+    SetSessionProjectTool,
     Tool,
     ToolMarker,
     ToolRegistry,
@@ -797,6 +798,7 @@ class SerenaAgent:
                     excluded_tools=[
                         ActivateProjectTool.get_name_from_cls(),
                         DeactivateProjectTool.get_name_from_cls(),
+                        SetSessionProjectTool.get_name_from_cls(),
                         ListActiveProjectsTool.get_name_from_cls(),
                         GetProjectStatusTool.get_name_from_cls(),
                         GetCurrentConfigTool.get_name_from_cls(),
