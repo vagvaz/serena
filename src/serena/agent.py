@@ -535,6 +535,7 @@ class SerenaAgent:
         self._gui_log_viewer: Optional["GuiLogViewer"] = None
         self._dashboard_viewer_process: multiprocessing.Process | None = None
         self._auto_register_projects = auto_register_projects
+        self._memory_log_handler: MemoryLogHandler | None = None
 
         self.version = serena_version()
 
@@ -559,13 +560,6 @@ class SerenaAgent:
             log.info(f"Changing the root logger level to {serena_log_level}")
             Logger.root.setLevel(serena_log_level)
 
-        def get_memory_log_handler() -> MemoryLogHandler:
-            nonlocal memory_log_handler
-            if memory_log_handler is None:
-                memory_log_handler = MemoryLogHandler(level=serena_log_level)
-                Logger.root.addHandler(memory_log_handler)
-            return memory_log_handler
-
         # open GUI log window if enabled
         if self.serena_config.gui_log_window:
             log.info("Opening GUI window")
@@ -579,7 +573,7 @@ class SerenaAgent:
                 self._gui_log_viewer = GuiLogViewer(
                     "dashboard",
                     title="Serena Logs",
-                    memory_log_handler=get_memory_log_handler(),
+                    memory_log_handler=self._get_memory_log_handler(),
                     shutdown_handler=lambda: self.shutdown(),
                 )
                 self._gui_log_viewer.start()
@@ -663,7 +657,7 @@ class SerenaAgent:
         # may access various parts of the agent
         if self.serena_config.web_dashboard:
             self._dashboard_thread, port = SerenaDashboardAPI(
-                get_memory_log_handler(), tool_names, agent=self, tool_usage_stats=self._tool_usage_stats
+                self._get_memory_log_handler(), tool_names, agent=self, tool_usage_stats=self._tool_usage_stats
             ).run_in_thread(host=self.serena_config.web_dashboard_listen_address)
             self._dashboard_manager = DashboardManager(
                 port,
@@ -678,6 +672,13 @@ class SerenaAgent:
                 self._gui_log_viewer.set_dashboard_url(self._dashboard_manager.url)
 
         self._send_usage_info()
+
+    def _get_memory_log_handler(self) -> MemoryLogHandler:
+        """Return the memory log handler, creating one if necessary."""
+        if self._memory_log_handler is None:
+            self._memory_log_handler = MemoryLogHandler(level=self.serena_config.log_level)
+            Logger.root.addHandler(self._memory_log_handler)
+        return self._memory_log_handler
 
     def restart_dashboard(self) -> str:
         """Restart the dashboard web server without affecting LSP processes or tool execution.
@@ -699,7 +700,7 @@ class SerenaAgent:
         log.info("Restarting dashboard...")
         tool_names = [tool.get_name() for tool in self.get_exposed_tool_instances()]
         self._dashboard_thread, port = SerenaDashboardAPI(
-            get_memory_log_handler(), tool_names, agent=self, tool_usage_stats=self._tool_usage_stats
+            self._get_memory_log_handler(), tool_names, agent=self, tool_usage_stats=self._tool_usage_stats
         ).run_in_thread(host=host)
 
         dashboard_host = host if host != "0.0.0.0" else "localhost"

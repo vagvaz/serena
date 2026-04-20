@@ -788,8 +788,6 @@ class Dashboard {
             this.$configDisplay.html(html);
 
             // Attach event handlers
-            const self = this;
-            
             // Project card click handlers - set as selected for detail view
             $('.project-card').click(function () {
                 const projectName = $(this).data('project-name');
