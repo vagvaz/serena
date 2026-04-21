@@ -649,6 +649,9 @@ class SerenaAgent:
 
         # Restore previously active projects from disk state
         self._restore_projects_from_disk()
+        # Ensure restored projects influence initial state
+        self._update_active_modes()
+        self._update_active_tools()
 
         # Start the idle project checker
         self._start_idle_checker()
@@ -1373,14 +1376,13 @@ class SerenaAgent:
 
     def _update_active_modes(self, log_message: bool = True) -> None:
         """
-        Updates the active modes based on the Serena configuration, the active project configuration (if any),
+        Updates the active modes based on the Serena configuration, the active project configurations (if any),
         and mode overrides (if any).
         """
         self._active_modes = ActiveModes()
         self._active_modes.apply(self.serena_config)
-        if self._active_projects:
-            first_project = next(iter(self._active_projects.values()))
-            self._active_modes.apply(first_project.project_config)
+        for project in self._active_projects.values():
+            self._active_modes.apply(project.project_config)
         if self._mode_overrides:
             self._active_modes.apply(self._mode_overrides)
         if log_message:
@@ -1389,18 +1391,17 @@ class SerenaAgent:
 
     def _update_active_tools(self) -> None:
         """
-        Updates the active tools based on the active modes and the active project.
+        Updates the active tools based on the active modes and the active projects.
         The base tool set already takes the Serena configuration and the context into account
         (as well as many other aspects, such as JetBrains mode).
         """
         # apply modes
         tool_set = self._base_toolset.apply(*self._active_modes.get_modes())
 
-        # apply active project configuration (if any) - uses the first active project for backward compat
-        first_project = self.get_active_project()
-        if first_project is not None:
-            tool_set = tool_set.apply(first_project.project_config)
-            if first_project.project_config.read_only:
+        # apply active project configurations (if any)
+        for project in self._active_projects.values():
+            tool_set = tool_set.apply(project.project_config)
+            if project.project_config.read_only:
                 tool_set = tool_set.without_editing_tools()
 
         self._active_tools = tool_set.to_available_tools(self._all_tools)
