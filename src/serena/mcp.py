@@ -273,15 +273,23 @@ class SerenaMCPFactory:
         assert self.agent is not None
         yield from self.agent.get_exposed_tool_instances()
 
-    # noinspection PyProtectedMember
     def _set_mcp_tools(self, mcp: FastMCP, openai_tool_compatible: bool = False) -> None:
         """Update the tools in the MCP server"""
         if mcp is not None:
-            mcp._tool_manager._tools = {}
+            # Remove any previously registered tools using the public API
+            for tool_name in list(mcp._tool_manager._tools.keys()):
+                try:
+                    mcp.remove_tool(tool_name)
+                except Exception:
+                    pass  # ignore if tool was already removed
+
+            # Register Serena tools
+            tool_names = []
             for tool in self._iter_tools():
                 mcp_tool = self.make_mcp_tool(tool, openai_tool_compatible=openai_tool_compatible)
                 mcp._tool_manager._tools[tool.get_name()] = mcp_tool
-            log.info(f"Starting MCP server with {len(mcp._tool_manager._tools)} tools: {list(mcp._tool_manager._tools.keys())}")
+                tool_names.append(tool.get_name())
+            log.info(f"Starting MCP server with {len(tool_names)} tools: {tool_names}")
 
     def _create_serena_agent(self, serena_config: SerenaConfig, modes: ModeSelectionDefinition | None = None) -> SerenaAgent:
         return SerenaAgent(
