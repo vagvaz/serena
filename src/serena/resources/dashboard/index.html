@@ -1,654 +1,97 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Serena Dashboard</title>
-    <link rel="icon" type="image/png" sizes="16x16" href="serena-icon-16.png">
-    <link rel="icon" type="image/png" sizes="32x32" href="serena-icon-32.png">
-    <link rel="icon" type="image/png" sizes="48x48" href="serena-icon-48.png">
-    <link rel="stylesheet" href="dashboard.css">
-    <script src="jquery.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
-    <script src="dashboard.js"></script>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Serena Dashboard</title>
+<link rel="icon" type="image/png" sizes="32x32" href="serena-icon-32.png">
+<link rel="stylesheet" href="dashboard.css">
+<script src="jquery.min.js"></script>
+<script src="dashboard.js"></script>
 </head>
-
 <body>
-<div id="frame">
-    <header class="header">
-        <div class="header-left">
-            <div class="logo-container">
-                <img id="serena-logo" class="theme-aware-img" src="serena-logo.svg" data-src-light="serena-logo.svg" data-src-dark="serena-logo-dark-mode.svg" alt="Serena">
-            </div>
+<div id="app">
+  <header id="topbar">
+    <div class="topbar-left">
+      <img id="logo" class="theme-aware" src="serena-logo.svg"
+           data-light="serena-logo.svg" data-dark="serena-logo-dark-mode.svg" alt="Serena">
+      <span id="version-badge"></span>
+    </div>
+    <div class="topbar-center">
+      <nav id="tabs">
+        <button class="tab active" data-page="overview">Overview</button>
+        <button class="tab" data-page="projects">Projects</button>
+        <button class="tab" data-page="sessions">Sessions</button>
+        <button class="tab" data-page="logs">Logs</button>
+        <button class="tab" data-page="tools">Tools</button>
+        <button class="tab" data-page="config">Config</button>
+      </nav>
+    </div>
+    <div class="topbar-right">
+      <span id="client-badge" class="badge"></span>
+      <button id="theme-btn" title="Toggle theme">🌙</button>
+    </div>
+  </header>
+
+  <main id="content">
+    <!-- Overview -->
+    <section id="page-overview" class="page active">
+      <div class="stat-row">
+        <div class="stat-card" id="stat-projects"><label>Projects</label><span class="stat-val">—</span></div>
+        <div class="stat-card" id="stat-sessions"><label>Sessions</label><span class="stat-val">—</span></div>
+        <div class="stat-card" id="stat-tools-active"><label>Tools Active</label><span class="stat-val">—</span></div>
+        <div class="stat-card" id="stat-tool-calls"><label>Tool Calls</label><span class="stat-val">—</span></div>
+        <div class="stat-card" id="stat-memories"><label>Memories</label><span class="stat-val">—</span></div>
+      </div>
+      <div id="overview-projects"></div>
+    </section>
+
+    <!-- Projects -->
+    <section id="page-projects" class="page">
+      <div class="page-header"><h2>Active Projects</h2></div>
+      <div id="projects-grid" class="card-grid"></div>
+      <div class="page-header" style="margin-top:2rem"><h2>Registered Projects</h2></div>
+      <div id="registered-projects"></div>
+    </section>
+
+    <!-- Sessions -->
+    <section id="page-sessions" class="page">
+      <div class="page-header"><h2>Sessions</h2></div>
+      <div id="sessions-list"></div>
+    </section>
+
+    <!-- Logs -->
+    <section id="page-logs" class="page">
+      <div class="page-header">
+        <h2>Logs</h2>
+        <div class="page-actions">
+          <select id="log-level-filter">
+            <option value="">All Levels</option>
+            <option value="INFO">INFO</option>
+            <option value="WARNING">WARNING</option>
+            <option value="ERROR">ERROR</option>
+            <option value="DEBUG">DEBUG</option>
+          </select>
+          <input id="log-search" type="text" placeholder="Search logs…">
+          <button id="clear-logs-btn" class="btn-sm">Clear</button>
+          <button id="scroll-lock-btn" class="btn-sm active" title="Auto-scroll">↓</button>
         </div>
+      </div>
+      <div id="log-container"><div class="log-placeholder">Waiting for logs…</div></div>
+    </section>
 
-        <nav class="header-nav">
-            <div class="header-actions">
-                <button id="theme-toggle" class="theme-toggle">
-                    <span id="theme-icon">🌙</span>
-                    <span id="theme-text">Dark</span>
-                </button>
-                <button id="menu-toggle" class="menu-button">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <line x1="3" y1="6" x2="21" y2="6"></line>
-                        <line x1="3" y1="12" x2="21" y2="12"></line>
-                        <line x1="3" y1="18" x2="21" y2="18"></line>
-                    </svg>
-                    <span>Menu</span>
-                </button>
-                <div id="menu-dropdown" class="menu-dropdown" style="display:none">
-                    <a href="#" data-page="stats">Advanced Stats</a>
-                    <hr>
-                    <a href="#" id="menu-shutdown">Shutdown Server</a>
-                </div>
-            </div>
-            <div class="header-tabs">
-                <a href="#" data-page="overview" class="header-tab active">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <rect x="3" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="3" width="7" height="7"></rect>
-                        <rect x="14" y="14" width="7" height="7"></rect>
-                        <rect x="3" y="14" width="7" height="7"></rect>
-                    </svg>
-                    Overview
-                </a>
-                <a href="#" data-page="active-projects" class="header-tab">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-                    </svg>
-                    Active Projects
-                </a>
-                <a href="#" data-page="logs" class="header-tab">
-                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="4 7 4 4 20 4 20 7"></polyline>
-                        <line x1="9" y1="20" x2="15" y2="20"></line>
-                        <line x1="12" y1="4" x2="12" y2="20"></line>
-                    </svg>
-                    Logs
-                </a>
-            </div>
-        </nav>
-    </header>
+    <!-- Tools -->
+    <section id="page-tools" class="page">
+      <div class="page-header"><h2>Tool Usage</h2></div>
+      <div id="tools-stats"></div>
+    </section>
 
-    <main class="main">
-        <!-- Overview Page (Landing) -->
-        <div id="page-overview" class="page-view">
-            <!-- News Section -->
-            <section id="news-section" class="card news-card" style="display:none">
-                <div class="card-header">
-                    <h2 class="card-title">
-                        <span class="card-icon">✨</span>
-                        What's New
-                    </h2>
-                </div>
-                <div id="news-display" class="card-body">
-                    <div class="skeleton-loader">
-                        <div class="skeleton-line" style="width: 60%"></div>
-                        <div class="skeleton-line" style="width: 40%"></div>
-                    </div>
-                </div>
-            </section>
-
-            <!-- Main Grid Layout -->
-            <div class="dashboard-grid">
-                <!-- Left Column -->
-                <div class="dashboard-main">
-                    <!-- Configuration Card -->
-                    <section class="card config-card">
-                        <div class="card-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">⚙️</span>
-                                Configuration
-                            </h2>
-                            <span class="badge badge-accent" id="version-badge">v--</span>
-                        </div>
-                        <div id="config-display" class="card-body">
-                            <div class="skeleton-loader">
-                                <div class="skeleton-grid">
-                                    <div class="skeleton-line" style="width: 80%"></div>
-                                    <div class="skeleton-line" style="width: 60%"></div>
-                                    <div class="skeleton-line" style="width: 90%"></div>
-                                    <div class="skeleton-line" style="width: 50%"></div>
-                                </div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Tool Usage Card -->
-                    <section class="card stats-card">
-                        <div class="card-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">📊</span>
-                                Tool Usage
-                            </h2>
-                        </div>
-                        <div id="basic-stats-display" class="card-body">
-                            <div class="skeleton-loader">
-                                <div class="skeleton-bar"></div>
-                                <div class="skeleton-bar"></div>
-                                <div class="skeleton-bar"></div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Executions Cards Row -->
-                    <div class="executions-row">
-                        <section class="card execution-card">
-                            <div class="card-header compact">
-                                <h2 class="card-title">
-                                    <span class="card-icon">⏳</span>
-                                    Queue
-                                </h2>
-                            </div>
-                            <div id="active-executions-display" class="card-body compact">
-                                <div class="empty-state">
-                                    <span class="empty-icon">✓</span>
-                                    <span class="empty-text">No pending tasks</span>
-                                </div>
-                            </div>
-                        </section>
-
-                        <section class="card execution-card">
-                            <div class="card-header compact">
-                                <h2 class="card-title">
-                                    <span class="card-icon">✓</span>
-                                    Last Execution
-                                </h2>
-                            </div>
-                            <div id="last-execution-display" class="card-body compact">
-                                <div class="empty-state">
-                                    <span class="empty-icon">-</span>
-                                    <span class="empty-text">No recent executions</span>
-                                </div>
-                            </div>
-                        </section>
-                    </div>
-
-                    <!-- Cancelled Executions (Hidden by default) -->
-                    <section class="card" style="display:none">
-                        <div class="card-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">🚫</span>
-                                Cancelled
-                            </h2>
-                        </div>
-                        <div id="cancelled-executions-display" class="card-body">
-                            <div class="empty-state">
-                                <span class="empty-text">No cancelled executions</span>
-                            </div>
-                        </div>
-                    </section>
-                </div>
-
-                <!-- Right Column -->
-                <div class="dashboard-sidebar">
-                    <!-- Projects Card -->
-                    <section class="card sidebar-card">
-                        <div class="card-header collapsible-header" id="projects-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">📁</span>
-                                Projects
-                            </h2>
-                            <span class="toggle-icon">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </span>
-                        </div>
-                        <div id="projects-display" class="collapsible-content card-body" style="display:none">
-                            <div class="skeleton-loader">
-                                <div class="skeleton-item"></div>
-                                <div class="skeleton-item"></div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Available Tools Card -->
-                    <section class="card sidebar-card">
-                        <div class="card-header collapsible-header" id="available-tools-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">🔧</span>
-                                Tools
-                            </h2>
-                            <span class="toggle-icon">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </span>
-                        </div>
-                        <div id="available-tools-display" class="collapsible-content card-body" style="display:none">
-                            <div class="empty-state small">
-                                <span class="empty-text">All tools enabled</span>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Available Modes Card -->
-                    <section class="card sidebar-card">
-                        <div class="card-header collapsible-header" id="available-modes-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">🎨</span>
-                                Modes
-                            </h2>
-                            <span class="toggle-icon">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </span>
-                        </div>
-                        <div id="available-modes-display" class="collapsible-content card-body" style="display:none">
-                            <div class="skeleton-loader">
-                                <div class="skeleton-item"></div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Available Contexts Card -->
-                    <section class="card sidebar-card">
-                        <div class="card-header collapsible-header" id="available-contexts-header">
-                            <h2 class="card-title">
-                                <span class="card-icon">🎯</span>
-                                Contexts
-                            </h2>
-                            <span class="toggle-icon">
-                                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                                    <polyline points="6 9 12 15 18 9"></polyline>
-                                </svg>
-                            </span>
-                        </div>
-                        <div id="available-contexts-display" class="collapsible-content card-body" style="display:none">
-                            <div class="skeleton-loader">
-                                <div class="skeleton-item"></div>
-                            </div>
-                        </div>
-                    </section>
-
-                    <!-- Gold Banners -->
-                    <section id="gold-banners" class="banner-section">
-                        <button class="banner-arrow banner-arrow-left" data-target="gold" aria-label="Previous banner">&#8249;</button>
-                        <button class="banner-arrow banner-arrow-right" data-target="gold" aria-label="Next banner">&#8250;</button>
-                    </section>
-
-                    <!-- Platinum Banners -->
-                    <section id="platinum-banners" class="banner-section">
-                        <button class="banner-arrow banner-arrow-left" data-target="platinum" aria-label="Previous banner">&#8249;</button>
-                        <button class="banner-arrow banner-arrow-right" data-target="platinum" aria-label="Next banner">&#8250;</button>
-                    </section>
-                </div>
-            </div>
-        </div>
-
-        <!-- Active Projects Page -->
-        <div id="page-active-projects" class="page-view" style="display:none">
-            <div class="page-header">
-                <h1 class="page-title">
-                    <span class="page-icon">🚀</span>
-                    Active Projects
-                </h1>
-                <p class="page-subtitle">Monitor and manage your active project sessions</p>
-            </div>
-            <div id="active-projects-list" class="active-projects-grid">
-                <div class="skeleton-loader large">
-                    <div class="skeleton-card"></div>
-                    <div class="skeleton-card"></div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Logs Page -->
-        <div id="page-logs" class="page-view" style="display:none">
-            <div id="error-container"></div>
-            <div class="logs-container">
-                <div class="log-toolbar">
-                    <div class="log-title">System Logs</div>
-                    <div class="log-action-buttons">
-                        <button id="copy-logs-btn" class="log-action-btn" title="Copy logs" disabled>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <rect x="9" y="9" width="13" height="13" rx="2" ry="2"></rect>
-                                <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"></path>
-                            </svg>
-                            <span>Copy</span>
-                        </button>
-                        <button id="save-logs-btn" class="log-action-btn" title="Save logs to file" disabled>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-                                <polyline points="7 10 12 15 17 10"></polyline>
-                                <line x1="12" y1="15" x2="12" y2="3"></line>
-                            </svg>
-                            <span>Save</span>
-                        </button>
-                        <button id="clear-logs-btn" class="log-action-btn log-action-btn-danger" title="Clear logs" disabled>
-                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <polyline points="3 6 5 6 21 6"></polyline>
-                                <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"></path>
-                                <path d="M10 11v6"></path>
-                                <path d="M14 11v6"></path>
-                            </svg>
-                            <span>Clear</span>
-                        </button>
-                    </div>
-                </div>
-                <div class="log-filters">
-                    <div class="log-filter-group">
-                        <label for="log-project-filter">Project</label>
-                        <select id="log-project-filter">
-                            <option value="">All projects</option>
-                        </select>
-                    </div>
-                    <div class="log-filter-group">
-                        <label for="log-session-filter">Session</label>
-                        <select id="log-session-filter">
-                            <option value="">All sessions</option>
-                        </select>
-                    </div>
-                    <div class="log-filter-group">
-                        <label for="log-level-filter">Level</label>
-                        <select id="log-level-filter">
-                            <option value="">All levels</option>
-                            <option value="ERROR">Errors</option>
-                            <option value="WARNING">Warnings</option>
-                            <option value="INFO">Info</option>
-                            <option value="DEBUG">Debug</option>
-                        </select>
-                    </div>
-                    <button id="log-filter-reset" class="log-action-btn secondary">Reset</button>
-                </div>
-                <div id="log-container" class="log-container"></div>
-            </div>
-        </div>
-
-        <!-- Advanced Stats Page -->
-        <div id="page-stats" class="page-view" style="display:none">
-            <div class="page-header">
-                <h1 class="page-title">
-                    <span class="page-icon">📈</span>
-                    Advanced Statistics
-                </h1>
-                <p class="page-subtitle">Detailed analytics and token usage metrics</p>
-            </div>
-
-            <div class="stats-controls">
-                <button id="refresh-stats" class="btn btn-primary">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="23 4 23 10 17 10"></polyline>
-                        <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path>
-                    </svg>
-                    Refresh
-                </button>
-                <button id="clear-stats" class="btn btn-secondary">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                        <polyline points="3 6 5 6 21 6"></polyline>
-                        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"></path>
-                    </svg>
-                    Clear
-                </button>
-            </div>
-
-            <div id="stats-summary" class="stats-summary-container"></div>
-            <div id="estimator-name" class="estimator-info"></div>
-
-            <div id="no-stats-message" class="empty-state-box" style="display:none;">
-                <span class="empty-icon large">📊</span>
-                <h3>No Statistics Yet</h3>
-                <p>Tool usage statistics will appear here once tools have been called.</p>
-            </div>
-
-            <div class="charts-container">
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Tool Calls</h3>
-                    </div>
-                    <div class="chart-body">
-                        <canvas id="count-chart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Input Tokens</h3>
-                    </div>
-                    <div class="chart-body">
-                        <canvas id="input-chart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card">
-                    <div class="chart-header">
-                        <h3>Output Tokens</h3>
-                    </div>
-                    <div class="chart-body">
-                        <canvas id="output-chart"></canvas>
-                    </div>
-                </div>
-                <div class="chart-card chart-wide">
-                    <div class="chart-header">
-                        <h3>Input vs Output Tokens</h3>
-                    </div>
-                    <div class="chart-body">
-                        <canvas id="tokens-chart" height="100"></canvas>
-                    </div>
-                </div>
-            </div>
-        </div>
-
-        <!-- Add Language Modal -->
-        <div id="add-language-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Add Language</h3>
-                    <button class="modal-close">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p id="modal-project-info" class="modal-info">
-                        Adding a language to serena config of project <strong id="modal-project-name"></strong>.
-                    </p>
-                    <div class="alert alert-info">
-                        <span class="alert-icon">ℹ️</span>
-                        <span>Note that this may download some dependencies needed for the language server and then start it,
-                        it may take a few seconds before the LS is responsive.</span>
-                    </div>
-                    <div class="form-group">
-                        <label for="modal-language-select" class="form-label">Select Language</label>
-                        <select id="modal-language-select" class="form-select">
-                        </select>
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button id="modal-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="modal-add-btn" class="btn btn-primary">Add Language</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Remove Language Confirmation Modal -->
-        <div id="remove-language-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content modal-small">
-                <div class="modal-header">
-                    <h3>Remove Language</h3>
-                    <button class="modal-close modal-close-remove">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p class="modal-confirm-text">
-                        Remove language <strong id="remove-language-name"></strong> from configuration?
-                    </p>
-                </div>
-                <div class="modal-footer">
-                    <button id="remove-modal-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="remove-modal-ok-btn" class="btn btn-danger">Remove</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Edit Memory Modal -->
-        <div id="edit-memory-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content modal-large">
-                <div class="modal-header">
-                    <h3 class="modal-title-with-input">
-                        <span>Memory:</span>
-                        <span id="edit-memory-name" class="memory-name-display"></span>
-                        <button id="edit-memory-rename-btn" class="icon-btn" title="Rename memory">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
-                                 stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                                <path d="M17 3a2.83 2.83 0 1 1 4 4L7.5 20.5 2 22l1.5-5.5L17 3z"></path>
-                            </svg>
-                        </button>
-                        <input type="text" id="edit-memory-rename-input" class="memory-rename-input" style="display: none;">
-                    </h3>
-                    <button class="modal-close modal-close-edit-memory">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <textarea id="edit-memory-content" class="memory-editor" rows="20"></textarea>
-                </div>
-                <div class="modal-footer">
-                    <button id="edit-memory-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="edit-memory-save-btn" class="btn btn-primary">Save Changes</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Delete Memory Confirmation Modal -->
-        <div id="delete-memory-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content modal-small">
-                <div class="modal-header">
-                    <h3>Delete Memory</h3>
-                    <button class="modal-close modal-close-delete-memory">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p class="modal-confirm-text">
-                        Delete memory <strong id="delete-memory-name"></strong>?
-                    </p>
-                    <p class="modal-warning">This action cannot be undone.</p>
-                </div>
-                <div class="modal-footer">
-                    <button id="delete-memory-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="delete-memory-ok-btn" class="btn btn-danger">Delete</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Create Memory Modal -->
-        <div id="create-memory-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content">
-                <div class="modal-header">
-                    <h3>Create Memory</h3>
-                    <button class="modal-close modal-close-create-memory">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p id="create-memory-project-info" class="modal-info">
-                        Create a new memory for project <strong id="create-memory-project-name"></strong>.
-                    </p>
-                    <div class="alert alert-info">
-                        <span class="alert-icon">ℹ️</span>
-                        <span>Memory names should be descriptive and use underscores instead of spaces (e.g., "api_architecture",
-                        "testing_guidelines"). Use "/" to organize memories into subdirectories (e.g., "architecture/api_design"),
-                        use the "global/" prefix to write memories that are shared across projects.</span>
-                    </div>
-                    <div class="form-group">
-                        <label for="create-memory-name-input" class="form-label">Memory Name</label>
-                        <input type="text" id="create-memory-name-input" class="form-input"
-                               placeholder="e.g., project_overview or topic/memory_name">
-                    </div>
-                </div>
-                <div class="modal-footer">
-                    <button id="create-memory-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="create-memory-create-btn" class="btn btn-primary">Create</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Cancel Execution Confirmation Modal -->
-        <div id="cancel-execution-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content modal-small">
-                <div class="modal-header">
-                    <h3>Cancel Execution</h3>
-                    <button class="modal-close modal-close-cancel-execution">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <p class="modal-confirm-text">
-                        Are you sure? The execution will continue running until timeout, it will simply no longer be in the queue.
-                    </p>
-                    <p class="modal-warning">Abandoning a running execution is only advised as a measure for unblocking Serena.</p>
-                </div>
-                <div class="modal-footer">
-                    <button id="cancel-execution-cancel-btn" class="btn btn-secondary">Keep Running</button>
-                    <button id="cancel-execution-ok-btn" class="btn btn-danger">Cancel Anyway</button>
-                </div>
-            </div>
-        </div>
-
-        <!-- Edit Serena Config Modal -->
-        <div id="edit-serena-config-modal" class="modal" style="display:none">
-            <div class="modal-overlay"></div>
-            <div class="modal-content modal-large">
-                <div class="modal-header">
-                    <h3>Global Configuration</h3>
-                    <button class="modal-close modal-close-edit-serena-config">
-                        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"></line>
-                            <line x1="6" y1="6" x2="18" y2="18"></line>
-                        </svg>
-                    </button>
-                </div>
-                <div class="modal-body">
-                    <div class="alert alert-warning">
-                        <span class="alert-icon">⚠️</span>
-                        <span>Changes to the configuration will only take effect after Serena is restarted.</span>
-                    </div>
-                    <textarea id="edit-serena-config-content" class="memory-editor" rows="20"></textarea>
-                </div>
-                <div class="modal-footer">
-                    <button id="edit-serena-config-cancel-btn" class="btn btn-secondary">Cancel</button>
-                    <button id="edit-serena-config-save-btn" class="btn btn-primary">Save Configuration</button>
-                </div>
-            </div>
-        </div>
-    </main>
+    <!-- Config -->
+    <section id="page-config" class="page">
+      <div class="page-header"><h2>Configuration</h2></div>
+      <div id="config-detail"></div>
+    </section>
+  </main>
 </div>
-
-<script>
-    $(document).ready(function () {
-        const dashboard = new Dashboard();
-    });
-</script>
 </body>
-
 </html>
