@@ -43,6 +43,7 @@ from serena.config.serena_config import (
 from serena.dashboard import SerenaDashboardAPI, SerenaDashboardTrayManager, SerenaDashboardViewer, open_url_in_browser
 from serena.ls_manager import LanguageServerManager
 from serena.project import MemoriesManager, Project
+from serena.project_manager import ProjectManager
 from serena.prompt_factory import SerenaPromptFactory
 from serena.task_executor import TaskExecutor
 from serena.session_manager import SessionManager, SessionState
@@ -527,12 +528,8 @@ class SerenaAgent:
         :param auto_register_projects: whether the agent may automatically register previously unseen projects when given a
             filesystem path (e.g. via session handshake). Defaults to False for safety.
         """
-        self._active_projects: dict[str, Project] = {}  # project_name → Project instance
-        self._session_projects: dict[str, str | None] = {}  # session_id → project_name (cached per session)
         self._session_manager = SessionManager()
         self._session_context_overrides: dict[str, SerenaAgentContext] = {}
-        self._project_last_active: dict[str, float] = {}  # project_name → last_active_timestamp
-        self._idle_timer: threading.Timer | None = None
         self._gui_log_viewer: Optional["GuiLogViewer"] = None
         self._dashboard_viewer_process: multiprocessing.Process | None = None
         self._auto_register_projects = auto_register_projects
@@ -623,22 +620,38 @@ class SerenaAgent:
         # This executor is used to achieve linear task execution
         self._task_executor = TaskExecutor("SerenaAgentTaskExecutor")
 
+        # create the ProjectManager — owns the lifecycle of N active projects
+        self._project_manager = ProjectManager(
+            serena_config=self.serena_config,
+            session_manager=self._session_manager,
+            task_executor=self._task_executor,
+            language_backend=self._language_backend,
+            on_projects_changed=self._on_projects_changed,
+        )
+
         # Initialize the prompt factory
         self.prompt_factory = SerenaPromptFactory()
 
-        # activate the given project (if any), also updating the active modes
+        # activate the startup project (if any) using ProjectManager
         # Note: We cannot update the active tools yet, because the base toolset has not been computed yet
         #       (and its computation depends on the active project)
+        startup_project_instance: Project | None = None
+        self._active_modes: ActiveModes
+        self._mode_overrides = modes
         if project is not None:
             try:
-                self.activate_project_from_path_or_name(project, update_active_modes=False, update_active_tools=False)
+                _proj = self._project_manager.resolve_project(project, self.serena_config)
+                if _proj is not None:
+                    _proj.set_agent(self)
+                    self._project_manager.add(_proj, notify=False)
+                    startup_project_instance = _proj
             except Exception as e:
                 log.error(f"Error activating project '{project}' at startup: {e}", exc_info=e)
         self._update_active_modes()
 
         # determine the base toolset defining the set of exposed tools (which e.g. the MCP shall see),
         self._base_toolset = self._create_base_toolset(
-            self.serena_config, self._language_backend, self._context, self._active_modes, self.get_active_project()
+            self.serena_config, self._language_backend, self._context, self._active_modes, startup_project_instance
         )
         self._exposed_tools = self._base_toolset.to_available_tools(self._all_tools)
         log.info(f"Number of exposed tools: {len(self._exposed_tools)}. Exposed tools: {self._exposed_tools.tool_names}")
@@ -648,13 +661,28 @@ class SerenaAgent:
         self._update_active_tools()
 
         # Restore previously active projects from disk state
-        self._restore_projects_from_disk()
+        # (set_agent is called inside the restore loop below)
+        for registered in self.serena_config.projects:
+            try:
+                state_file = os.path.join(registered.project_root, ".serena", "active_state.json")
+                if not os.path.exists(state_file):
+                    continue
+                with open(state_file) as f:
+                    json.load(f)  # validate but don't use values
+                project_instance = registered.get_project_instance(self.serena_config)
+                if project_instance:
+                    project_instance.set_agent(self)
+                    self._project_manager.add(project_instance, notify=False)
+                    log.info("Restored project '%s' from disk state", project_instance.project_name)
+            except Exception as e:
+                log.warning("Failed to restore project '%s' from disk: %s", registered.project_name, e)
+
         # Ensure restored projects influence initial state
         self._update_active_modes()
         self._update_active_tools()
 
         # Start the idle project checker
-        self._start_idle_checker()
+        self._project_manager.start_idle_checker()
 
         # start the dashboard (web frontend), registering its log handler
         # should be the last thing to happen in the initialization since the dashboard
@@ -841,13 +869,23 @@ class SerenaAgent:
         return self._task_executor.get_last_executed_task()
 
     def get_language_server_manager(self) -> LanguageServerManager | None:
-        if self._active_projects:
-            return next(iter(self._active_projects.values())).language_server_manager
+        # Return the LS manager from the first active project, or None
+        for project in self._project_manager.get_all().values():
+            return project.language_server_manager
         return None
 
     def get_language_server_manager_or_raise(self) -> LanguageServerManager:
-        active_project = self.get_active_project_or_raise()
-        return active_project.get_language_server_manager_or_raise()
+        # Use the project context from tool execution (set by apply_ex)
+        from serena.tools.tools_base import _current_project
+
+        project = _current_project.get()
+        if project is None:
+            # If no context is set, try the first active project (defensive fallback)
+            first = next(iter(self._project_manager.get_all().values()), None)
+            if first is None:
+                raise ValueError("No active project.")
+            project = first
+        return project.get_language_server_manager_or_raise()
 
     def get_log_inspection_instructions(self) -> str:
         if self.serena_config.web_dashboard:
@@ -920,44 +958,24 @@ class SerenaAgent:
         """
         return list(self._exposed_tools.tools)
 
-    def get_active_project(self) -> Project | None:
-        """
-        :return: the first active project or None if no project is active.
-            For backward compatibility, returns the first project in the active set.
-            Use get_active_project_by_name() for specific project lookup.
-        """
-        if self._active_projects:
-            return next(iter(self._active_projects.values()))
-        return None
+    # ── Project query methods (delegate to ProjectManager) ─────────────────
 
     def get_active_project_by_name(self, name: str) -> Project | None:
         """
+        Look up an active project by its canonical name.
+
         :param name: the project name
-        :return: the active project with the given name, or None if not active
+        :returns: the Project, or ``None`` if not active
         """
-        return self._active_projects.get(name)
+        return self._project_manager.get_by_name(name)
 
     def get_all_active_projects(self) -> dict[str, Project]:
         """
-        :return: a copy of the dict mapping project names to active Project instances
-        """
-        return dict(self._active_projects)
+        Return a snapshot of all active projects.
 
-    def get_active_project_or_raise(self) -> Project:
+        :returns: ``{project_name: Project}``
         """
-        :return: the first active project or raises an exception if no project is active.
-            For backward compatibility. Prefer get_active_project_by_name() when multiple
-            projects may be active.
-        """
-        project = self.get_active_project()
-        if project is None:
-            raise ValueError("No active project. Please activate a project first.")
-        return project
-
-    @property
-    def _project_root_index(self) -> dict[str, Project]:
-        """Cached mapping of project_root → Project for O(1) path resolution."""
-        return {p.project_root: p for p in self._active_projects.values()}
+        return self._project_manager.get_all()
 
     def resolve_project_for_path(self, cwd: str) -> Project | None:
         """
@@ -967,85 +985,31 @@ class SerenaAgent:
         :param cwd: an absolute path (e.g. current working directory)
         :return: the matching Project, or None if no active project matches
         """
-        # Normalize the path
-        cwd = os.path.normpath(cwd)
-
-        # 1. Exact match first
-        root_index = self._project_root_index
-        if cwd in root_index:
-            return root_index[cwd]
-
-        # 2. Longest prefix match (handles subdirectories and nested projects)
-        best_match: Project | None = None
-        best_len = 0
-        for root, project in root_index.items():
-            if cwd.startswith(root) and len(root) > best_len:
-                best_match = project
-                best_len = len(root)
-        return best_match
+        return self._project_manager.resolve_for_path(cwd)
 
     def resolve_session_project(self, session_id: str | None, cwd: str | None) -> Project | None:
         """
         Resolve the project for a tool call based on session and working directory.
 
-        Resolution order:
-        1. If cwd is provided, resolve it to a project via longest-prefix matching
-           and cache the result for the session
-        2. Fall back to session manager's project binding
-        3. Fall back to the session-cached project name
-        4. Return None if no project can be determined
+        Resolution order (via :class:`ProjectManager`):
+        1. Resolve from *cwd* using longest-prefix matching; cache in session manager.
+        2. Fall back to session manager's existing project binding.
+        3. Return ``None`` — the caller must error, not guess.
 
         :param session_id: the MCP session/client identifier
         :param cwd: the current working directory of the tool call
         :return: the resolved Project, or None if no project can be determined
         """
-        # Step 1: Try to resolve from cwd
-        if cwd:
-            project = self.resolve_project_for_path(cwd)
-            if project:
-                # Cache for this session
-                if session_id:
-                    self._session_projects[session_id] = project.project_name
-                    self._session_manager.set_project(session_id, project.project_name)
-                return project
-
-        # Step 2: Fall back to session manager's binding
-        if session_id:
-            manager_project_name = self._session_manager.get_project_name(session_id)
-            if manager_project_name:
-                project = self._active_projects.get(manager_project_name)
-                if project:
-                    return project
-
-        # Step 3: Fall back to session-cached project name
-        if session_id:
-            cached_name = self._session_projects.get(session_id)
-            if cached_name:
-                project = self._active_projects.get(cached_name)
-                if project:
-                    return project
-
-        # Step 4: No project could be resolved — return None
-        # The caller (apply_ex) handles None by returning an error message
-        # asking the user to specify a project.
-        return None
+        return self._project_manager.resolve_for_session(session_id, cwd)
 
     def get_session_project(self, session_id: str) -> Project | None:
         """
-        Get the cached project for a session without resolving from cwd.
+        Get the project bound to a session without resolving from cwd.
 
         :param session_id: the MCP session/client identifier
         :return: the cached Project, or None
         """
-        # Check session manager first
-        manager_project_name = self._session_manager.get_project_name(session_id)
-        if manager_project_name:
-            return self._active_projects.get(manager_project_name)
-        # Fall back to legacy cache
-        cached_name = self._session_projects.get(session_id)
-        if cached_name:
-            return self._active_projects.get(cached_name)
-        return None
+        return self._project_manager.get_session_project(session_id)
 
     def get_session_manager(self) -> SessionManager:
         """Return the session manager for multi-client daemon support."""
@@ -1128,16 +1092,9 @@ class SerenaAgent:
             # Determine the canonical project name after activation
             activated_project = self.serena_config.get_project(activation_target)
             if activated_project is None and os.path.isdir(activation_target):
-                activated_project = self.resolve_project_for_path(os.path.abspath(activation_target))
-            if activated_project is None:
-                # Do not fall back to an arbitrary active project —
-                # that would bind this session to the wrong project.
-                # Leave the session unbound; the caller will get a clear
-                # error when they try to use a project-requiring tool.
-                pass
+                activated_project = self._project_manager.resolve_for_path(os.path.abspath(activation_target))
             if activated_project is not None:
                 canonical_name = activated_project.project_name
-                self._session_projects[session_id] = canonical_name
                 state = self._session_manager.update_session(
                     session_id,
                     project_name=canonical_name,
@@ -1155,94 +1112,12 @@ class SerenaAgent:
     # ── Idle timeout tracking ──────────────────────────────────────────────
 
     def _touch_project(self, project: Project) -> None:
-        """Update the last-active timestamp for a project."""
-        self._project_last_active[project.project_name] = time.time()
-        # Also touch all sessions bound to this project
-        for session in self._session_manager.get_sessions_for_project(project.project_name):
-            session.touch()
-
-    def _start_idle_checker(self) -> None:
-        """Start the periodic idle project checker."""
-        interval = self.serena_config.project_idle_check_interval_seconds
-        self._idle_timer = threading.Timer(interval, self._check_idle_projects)
-        self._idle_timer.daemon = True
-        self._idle_timer.start()
-
-    def _check_idle_projects(self) -> None:
-        """Periodic checker that shuts down projects that have been idle too long."""
-        now = time.time()
-        timeout = self.serena_config.project_idle_timeout_seconds
-        changed = False
-
-        for name, last_active in list(self._project_last_active.items()):
-            session_count = self._session_manager.get_project_session_count(name)
-            if session_count > 0:
-                log.debug(
-                    "Skipping idle shutdown for project '%s' because %s session(s) remain bound",
-                    name,
-                    session_count,
-                )
-                continue
-
-            idle_duration = now - last_active
-            if idle_duration > timeout:
-                project = self._active_projects.get(name)
-                if project:
-                    log.info(
-                        "Project '%s' idle for %.0fs (timeout=%ss) with no active sessions, shutting down",
-                        name,
-                        idle_duration,
-                        timeout,
-                    )
-                    self._persist_project_state(project)
-                    self._remove_active_project(name)
-                    changed = True
-
-        # Persist all remaining projects' state periodically
-        if not changed:
-            for project in list(self._active_projects.values()):
-                self._persist_project_state(project)
-
-        # Reschedule
-        self._start_idle_checker()
-
-    def _persist_project_state(self, project: Project) -> None:
-        """Save a project's active state to disk for restoration on next startup."""
-        try:
-            state_file = os.path.join(project.serena_folder, "active_state.json")
-            ls_manager = project.language_server_manager
-            state = {
-                "project_name": project.project_name,
-                "project_root": project.project_root,
-                "last_active": self._project_last_active.get(project.project_name),
-                "lsp_running": ls_manager.is_running() if ls_manager else False,
-            }
-            os.makedirs(os.path.dirname(state_file), exist_ok=True)
-            with open(state_file, "w") as f:
-                json.dump(state, f)
-        except Exception as e:
-            log.warning(f"Failed to persist state for project '{project.project_name}': {e}")
+        """Update the last-active timestamp for a project (delegates to ProjectManager)."""
+        self._project_manager.touch(project)
 
     def _persist_all_projects(self) -> None:
-        """Save state for all active projects."""
-        for project in list(self._active_projects.values()):
-            self._persist_project_state(project)
-
-    def _restore_projects_from_disk(self) -> None:
-        """On agent startup, restore previously active projects from their saved state."""
-        for registered in self.serena_config.projects:
-            try:
-                state_file = os.path.join(registered.project_root, ".serena", "active_state.json")
-                if os.path.exists(state_file):
-                    with open(state_file) as f:
-                        state = json.load(f)
-                    # Re-add the project (LSP will be lazily loaded, not started immediately)
-                    project = registered.get_project()
-                    if project:
-                        self._add_active_project(project, update_active_modes=False, update_active_tools=False)
-                        log.info(f"Restored project '{project.project_name}' from disk state")
-            except Exception as e:
-                log.warning(f"Failed to restore project '{registered.project_name}' from disk: {e}")
+        """Save state for all active projects (delegates to ProjectManager)."""
+        self._project_manager.persist_all()
 
     def set_modes(self, mode_names: list[str]) -> None:
         """
@@ -1303,25 +1178,17 @@ class SerenaAgent:
             global_memories_list=global_memories_str,
         )
 
-        # provide the project activation message if it hasn't yet been provided
-        if self._active_project is not None and not self._project_prompt_status.is_project_activation_message_already_provided(session_id):
-            system_prompt += "\n\n" + self.get_project_activation_message(session_id)
+        # If a session has a project bound, append its activation message
+        if session_state and session_state.project_name:
+            project = self._project_manager.get_by_name(session_state.project_name)
+            if project is not None and not self._project_prompt_status.is_project_activation_message_already_provided(session_id):
+                system_prompt += "\n\n" + self._get_project_activation_message(project)
 
         if session_state and session_state.persona_name:
             system_prompt += f"\nPersona: {session_state.persona_name}"
 
         log.info("System prompt:\n%s", system_prompt)
         return system_prompt
-
-    def get_project_activation_message(self, session_id: str) -> str:
-        """
-        :return: a message providing information about the first active project upon activation.
-            For multi-project scenarios, use _get_project_activation_message(project) instead.
-        :raise: AssertionError if no project is active
-        """
-        proj = self.get_active_project()
-        assert proj is not None, "A project must be active before calling this."
-        return self._get_project_activation_message(proj)
 
     def _get_project_activation_message(self, project: Project) -> str:
         """
@@ -1381,7 +1248,7 @@ class SerenaAgent:
         """
         self._active_modes = ActiveModes()
         self._active_modes.apply(self.serena_config)
-        for project in self._active_projects.values():
+        for project in self._project_manager.get_all().values():
             self._active_modes.apply(project.project_config)
         if self._mode_overrides:
             self._active_modes.apply(self._mode_overrides)
@@ -1399,7 +1266,7 @@ class SerenaAgent:
         tool_set = self._base_toolset.apply(*self._active_modes.get_modes())
 
         # apply active project configurations (if any)
-        for project in self._active_projects.values():
+        for project in self._project_manager.get_all().values():
             tool_set = tool_set.apply(project.project_config)
             if project.project_config.read_only:
                 tool_set = tool_set.without_editing_tools()
@@ -1490,123 +1357,43 @@ class SerenaAgent:
         """
         return self._language_backend == LanguageBackend.LSP
 
-    def _add_active_project(self, project: Project, update_active_modes: bool = True, update_active_tools: bool = True) -> bool:
-        """
-        Add a project to the active set. Does NOT shutdown other active projects.
-
-        :return: True if the project was newly added, False if it was already active
-        """
-        # check if the project is already active
-        if project.project_name in self._active_projects:
-            return False
-
-        log.info(f"Adding {project.project_name} at {project.project_root} to active projects")
-
-        # check if the project requires a different language backend than the one initialized at startup
-        project_backend = project.project_config.language_backend
-        if project_backend is not None and project_backend != self._language_backend:
-            raise ValueError(
-                f"Cannot activate project '{project.project_name}': it requires the {project_backend.value} backend, "
-                f"but this session was initialized with {self._language_backend.value}. "
-                f"Workarounds: (1) Use project activation at startup via the --project flag, "
-                f"(2) Configure one MCP server per backend in your client."
-            )
-
-        self._active_projects[project.project_name] = project
-        project.set_agent(self)
-
-        if update_active_modes:
-            active_mode_names_before = set(self._active_modes.get_mode_names())
-            self._update_active_modes()
-            newly_activated_mode_names = set(self._active_modes.get_mode_names()) - active_mode_names_before
-        else:
-            newly_activated_mode_names = None
-
-        self._project_prompt_status = ProjectPromptProvisionStatus(newly_activated_mode_names=newly_activated_mode_names)
-
-        if update_active_tools:
-            self._update_active_tools()
-
-        def init_language_server_manager() -> None:
-            # start the language server
-            with LogTime("Language server initialization", logger=log):
-                project.create_language_server_manager()
-
-        # initialize the language server in the background (if in language server mode)
-        if self.get_language_backend().is_lsp():
-            self.issue_task(init_language_server_manager)
-
-        if self._project_activation_callback is not None:
-            self._project_activation_callback()
-
-        # notify the dashboard manager of the project change (if applicable)
-        if self._dashboard_manager:
-            self._dashboard_manager.update_active_project(self._active_project)
-
-        return True
-
     def _remove_active_project(self, project_name: str) -> bool:
         """
-        Remove a project from the active set and shutdown its resources.
+        Remove a project from the active set and shut down its resources.
+        Delegates to ProjectManager which handles session bindings and cleanup.
 
         :param project_name: the name of the project to remove
         :return: True if the project was removed, False if it wasn't active
         """
-        project = self._active_projects.pop(project_name, None)
-        if project is None:
-            return False
-
-        log.info(f"Removing {project_name} from active projects")
-        project.shutdown()
-
-        # Clean up session cache entries for this project
-        sessions_to_clear = [sid for sid, pname in self._session_projects.items() if pname == project_name]
-        for sid in sessions_to_clear:
-            del self._session_projects[sid]
-
-        # Also clear session manager bindings for this project
-        for session in self._session_manager.get_sessions_for_project(project_name):
-            session.project_name = None
-
-        # Update modes and tools since the project is no longer active
-        self._update_active_modes()
-        self._update_active_tools()
-
-        return True
-
-    def _activate_project(self, project: Project, update_active_modes: bool = True, update_active_tools: bool = True) -> bool:
-        """
-        Legacy method for backward compatibility. Adds project to active set.
-
-        :return: True if the project was newly activated, False if it was already active
-        """
-        return self._add_active_project(project, update_active_modes=update_active_modes, update_active_tools=update_active_tools)
+        return self._project_manager.remove(project_name)
 
     def activate_project_from_path_or_name(
-        self, project_root_or_name: str, update_active_modes: bool = True, update_active_tools: bool = True
+        self, project_root_or_name: str
     ) -> bool:
         """
         Activate a project from a path or a name.
-        If the project was already registered, it will just be activated.
-        If the argument is a path at which no Serena project previously existed, the project will be created beforehand.
-        Raises ProjectNotFoundError if the project could neither be found nor created.
 
+        Resolution is delegated to ProjectManager. If the project resolves,
+        ``project.set_agent(self)`` is called before adding it to the active set.
+
+        :param project_root_or_name: registered project name or filesystem path
         :return: True if the project was newly activated, False if it was already active
+        :raises ProjectNotFoundError: if the project could neither be found nor created
         """
-        project_instance: Project | None = self.serena_config.get_project(project_root_or_name)
-        if project_instance is not None:
-            log.info(f"Found registered project '{project_instance.project_name}' at path {project_instance.project_root}")
-        elif os.path.isdir(project_root_or_name):
-            project_instance = self.serena_config.add_project_from_path(project_root_or_name)
-            log.info(f"Added new project {project_instance.project_name} for path {project_instance.project_root}")
-
+        project_instance = self._project_manager.resolve_project(project_root_or_name, self.serena_config)
         if project_instance is None:
             raise ProjectNotFoundError(
-                f"Project '{project_root_or_name}' not found: Not a valid project name or directory. "
+                f"Project '{project_root_or_name}' not found. "
                 f"Existing project names: {self.serena_config.project_names}"
             )
 
-        return self._activate_project(project_instance, update_active_modes=update_active_modes, update_active_tools=update_active_tools)
+        project_instance.set_agent(self)
+        is_new = self._project_manager.add(project_instance)
+
+        if is_new and self._project_activation_callback is not None:
+            self._project_activation_callback()
+
+        return is_new
 
     def get_active_tool_names(self) -> list[str]:
         """
@@ -1635,14 +1422,16 @@ class SerenaAgent:
         result_str = "Current configuration:\n"
         result_str += f"Serena version: {self.version}\n"
         result_str += f"Loglevel: {self.serena_config.log_level}, trace_lsp_communication={self.serena_config.trace_lsp_communication}\n"
-        first_project = self.get_active_project()
-        if first_project is not None:
-            result_str += f"Active project: {first_project.project_name}\n"
+        all_active = self._project_manager.get_all()
+        if all_active:
+            result_str += "Active projects: {}\n".format(", ".join(all_active.keys()))
         else:
-            result_str += "No active project\n"
+            result_str += "No active projects\n"
         result_str += f"Language backend: {self._language_backend.value}"
-        if first_project and first_project.project_config.language_backend is not None:
-            result_str += " (project override)"
+        if all_active:
+            first_project = next(iter(all_active.values()))
+            if first_project.project_config.language_backend is not None:
+                result_str += " (project override)"
         result_str += f" (global default: {self.serena_config.language_backend.value})\n"
         result_str += "Available projects:\n" + "\n".join(list(self.serena_config.project_names)) + "\n"
         result_str += f"Active context: {self._context.name}\n"
@@ -1708,6 +1497,11 @@ class SerenaAgent:
     def print_tool_overview(self) -> None:
         ToolRegistry().print_tool_overview(self._active_tools.tools)
 
+    def _on_projects_changed(self) -> None:
+        """Callback invoked by ProjectManager after any project is added or removed."""
+        self._update_active_modes()
+        self._update_active_tools()
+
     def __del__(self) -> None:
         self.on_shutdown()
 
@@ -1716,21 +1510,10 @@ class SerenaAgent:
         Shutdown handler of the agent, freeing resources and stopping background tasks.
         """
         log.info("SerenaAgent is shutting down ...")
-        # Cancel the idle checker
-        if self._idle_timer is not None:
-            self._idle_timer.cancel()
-            self._idle_timer = None
-        # Persist all project states before shutdown
-        self._persist_all_projects()
-        # Shutdown all active projects
-        for project_name, project in list(self._active_projects.items()):
-            log.info(f"Shutting down active project '{project_name}' ...")
-            project.shutdown(timeout=timeout)
-        self._active_projects.clear()
-        self._session_projects.clear()
+        # Shut down all projects via ProjectManager
+        self._project_manager.shutdown_all(timeout=timeout)
         self._session_context_overrides.clear()
         self._session_manager = SessionManager()
-        self._project_last_active.clear()
         if self._gui_log_viewer:
             log.info("Stopping the GUI log window ...")
             self._gui_log_viewer.stop()
@@ -1762,21 +1545,15 @@ class SerenaAgent:
     @contextmanager
     def active_project_context(self, project: Project) -> Iterator[None]:
         """
-        Context manager for temporarily setting/overriding the active project.
-        This does NOT shutdown the project - it only swaps the reference returned
-        by get_active_project(). For multi-project scenarios, prefer using
-        resolve_session_project() or passing cwd to tool calls.
+        Context manager for temporarily setting/overriding the project context.
+        Delegates to ``project_context()`` from ``tools_base`` to set the
+        thread-local ``_current_project`` variable.
 
-        :param project: the project to be temporarily active
+        .. deprecated::
+           Prefer ``project_context(project)`` from ``serena.tools.tools_base``
+           for new code.
         """
-        original_project = self.get_active_project()
-        # Temporarily insert the project if not already active
-        was_already_active = project.project_name in self._active_projects
-        if not was_already_active:
-            self._active_projects[project.project_name] = project
-        try:
+        from serena.tools.tools_base import project_context
+
+        with project_context(project):
             yield
-        finally:
-            # Remove if we added it temporarily
-            if not was_already_active:
-                self._active_projects.pop(project.project_name, None)

@@ -9,6 +9,8 @@ from sensai.util.logging import LogTime
 
 from serena.config.serena_config import LanguageBackend, SerenaConfig
 from serena.constants import SerenaPorts
+from serena.jetbrains.jetbrains_plugin_client import JetBrainsPluginClient
+from serena.tools.tools_base import project_context
 
 if TYPE_CHECKING:
     from serena.project import Project
@@ -90,7 +92,7 @@ class ProjectServer:
     def _query_project(self, req: QueryProjectRequest) -> str:
         """Handle a /query_project request by invoking the agent on the specified project and tool."""
         project = self._get_project(req.project_name)
-        with self._agent.active_project_context(project):
+        with project_context(project):
             tool = self._agent.get_tool_by_name(req.tool_name)
             if not tool.is_readonly():
                 raise ValueError(f"Tool '{req.tool_name}' is not read-only and cannot be executed via the query_project route")

@@ -516,15 +516,17 @@ class SerenaDashboardAPI:
             self._tool_usage_stats.clear()
 
     def _resolve_project(self, project_name: str | None = None):
-        """Resolve a project for dashboard operations.
+        """Resolve a project for dashboard display operations.
 
-        :param project_name: explicit project name from the client, or None to use the first active project.
+        :param project_name: explicit project name from the client, or None to use
+            the first active project as a display fallback.
         :return: the resolved Project, or None if no project is active.
         """
         if project_name:
             return self._agent.get_active_project_by_name(project_name)
-        # Default to first active project for dashboard display purposes
-        return self._agent.get_active_project()
+        # UI display fallback — return first active project, if any
+        all_active = self._agent.get_all_active_projects()
+        return next(iter(all_active.values())) if all_active else None
 
     def _get_config_overview(self) -> ResponseConfigOverview:
         import time
@@ -539,7 +541,7 @@ class SerenaDashboardAPI:
             languages = [lang.value for lang in proj.project_config.languages]
             ls_manager = proj.language_server_manager
             lsp_running = ls_manager.is_running() if ls_manager else False
-            last_active = self._agent._project_last_active.get(name)
+            last_active = self._agent._project_manager.get_last_active_timestamp(name)
             idle_seconds = time.time() - last_active if last_active else None
 
             # Get per-project memories

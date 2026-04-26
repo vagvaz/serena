@@ -86,12 +86,22 @@ class Component(ABC):
 
     @property
     def project(self) -> Project:
-        # First try the context variable (set by the tool execution wrapper)
+        # Use the context variable (set by project_context in the tool execution wrapper)
         proj = _current_project.get()
         if proj is not None:
             return proj
-        # Fall back to the agent's active project (backward compatibility)
-        return self.agent.get_active_project_or_raise()
+        # No context variable set — this is a bug in production, but tests
+        # call tool.apply() directly without the apply_ex wrapper. As a
+        # defensive fallback, if there is exactly one active project we use
+        # it unambiguously; if there are multiple or zero, we raise.
+        all_projects = self.agent.get_all_active_projects()
+        if len(all_projects) == 1:
+            return next(iter(all_projects.values()))
+        raise RuntimeError(
+            "No project context set. Tools must be called through the standard "
+            "tool execution flow which resolves the project via "
+            "resolve_session_project / project_context."
+        )
 
     def create_code_editor(self) -> "CodeEditor":
         from ..code_editor import JetBrainsCodeEditor

@@ -4,6 +4,7 @@ from serena.config.serena_config import LanguageBackend
 from serena.jetbrains.jetbrains_plugin_client import JetBrainsPluginClientManager
 from serena.project_server import ProjectServerClient
 from serena.tools import Tool, ToolMarkerDoesNotRequireActiveProject, ToolMarkerOptional
+from serena.tools.tools_base import project_context
 
 
 class ListQueryableProjectsTool(Tool, ToolMarkerOptional, ToolMarkerDoesNotRequireActiveProject):
@@ -32,8 +33,15 @@ class ListQueryableProjectsTool(Tool, ToolMarkerOptional, ToolMarkerDoesNotRequi
         else:
             relevant_projects = registered_projects
 
-        # return project names and roots
+        # return project names and roots, excluding the caller's session-bound project (if any)
         result = {p.project_name: str(p.project_root) for p in relevant_projects}
+        from serena.tools.tools_base import get_current_session_id
+
+        session_id = get_current_session_id()
+        if session_id:
+            session_project = self.agent.get_session_project(session_id)
+            if session_project is not None:
+                result.pop(session_project.project_name, None)
         return self._to_json(result)
 
 
@@ -62,7 +70,7 @@ class QueryProjectTool(Tool, ToolMarkerOptional, ToolMarkerDoesNotRequireActiveP
             registered_project = self.agent.serena_config.get_registered_project(project_name)
             assert registered_project is not None, f"Project {project_name} is not registered and cannot be queried."
             project = registered_project.get_project_instance(self.agent.serena_config)
-            with tool.agent.active_project_context(project):
+            with project_context(project):
                 return tool.apply(**json.loads(tool_params_json))  # type: ignore
 
     def _is_project_server_required(self, tool: Tool) -> bool:

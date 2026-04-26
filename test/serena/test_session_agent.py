@@ -110,8 +110,7 @@ class TestResolveSessionProject:
         sm = serena_agent_with_project.get_session_manager()
         assert sm.get_project_name("sess-1") == "test_project"
 
-        # Check session cache
-        assert serena_agent_with_project._session_projects.get("sess-1") == "test_project"
+        # Session cache was removed — only the session manager tracks bindings
 
     def test_resolve_falls_back_to_session_manager(self, serena_agent_with_project):
         """Should fall back to session manager's project binding when cwd is None."""
@@ -123,14 +122,9 @@ class TestResolveSessionProject:
         assert result is not None
         assert result.project_name == "test_project"
 
+    @pytest.mark.skip(reason="Session cache was removed in favor of SessionManager-only tracking")
     def test_resolve_falls_back_to_session_cache(self, serena_agent_with_project):
-        """Should fall back to session-cached project name."""
-        # Set the session cache directly (simulating a prior resolution)
-        serena_agent_with_project._session_projects["sess-1"] = "test_project"
-
-        result = serena_agent_with_project.resolve_session_project("sess-1", None)
-        # Should return the project via session cache
-        assert result is not None
+        """Should fall back to session-cached project name (removed — SessionManager only)."""
 
     def test_resolve_returns_none_when_no_session_info(self, serena_agent_with_project):
         """Should return None when no session info is available (no data bleeding)."""
@@ -185,11 +179,12 @@ class TestIdleProjectTracking:
     def test_touch_project_updates_timestamp(self, serena_agent_with_project, serena_config):
         """Touching a project should update its last-active timestamp."""
         project = serena_config.projects[0].get_project_instance(serena_config)
+        pm = serena_agent_with_project._project_manager
 
-        old_ts = serena_agent_with_project._project_last_active.get("test_project", 0)
+        old_ts = pm.get_last_active_timestamp("test_project") or 0
         time.sleep(0.01)
         serena_agent_with_project._touch_project(project)
-        new_ts = serena_agent_with_project._project_last_active.get("test_project", 0)
+        new_ts = pm.get_last_active_timestamp("test_project") or 0
         assert new_ts > old_ts
 
     def test_touch_project_touches_bound_sessions(self, serena_agent_with_project, serena_config):
@@ -241,33 +236,31 @@ class TestIdleProjectTracking:
         assert sess2.last_active_at == old_ts2
 
     def test_idle_checker_starts(self, serena_agent):
-        """Idle checker timer should be started."""
-        assert serena_agent._idle_timer is not None
-        assert serena_agent._idle_timer.is_alive() or not serena_agent._idle_timer.finished.is_set()
-
-    def test_check_idle_projects_no_crash_on_empty(self, serena_agent):
-        """Idle checker should handle empty project list gracefully."""
-        # Should not raise
-        serena_agent._check_idle_projects()
+        """Idle checker timer should be started on the ProjectManager."""
+        assert serena_agent._project_manager._idle_timer is not None
 
     def test_idle_checker_keeps_project_with_active_sessions(self, serena_agent_with_project):
         agent = serena_agent_with_project
+        pm = agent._project_manager
         agent.serena_config.project_idle_timeout_seconds = 0
-        agent._project_last_active["test_project"] = time.time() - 1
+        pm.touch(next(iter(pm.get_all().values())))
+        import time as _time
+        pm._project_last_active["test_project"] = _time.time() - 1
         agent.get_session_manager().register_session("sess-keep", project_name="test_project")
 
-        agent._check_idle_projects()
+        pm._check_idle_projects()
 
-        assert "test_project" in agent._active_projects
+        assert pm.is_active("test_project")
 
     def test_idle_checker_shuts_down_when_no_sessions(self, serena_agent_with_project):
         agent = serena_agent_with_project
+        pm = agent._project_manager
         agent.serena_config.project_idle_timeout_seconds = 0
-        agent._project_last_active["test_project"] = time.time() - 1
+        pm._project_last_active["test_project"] = time.time() - 1
 
-        agent._check_idle_projects()
+        pm._check_idle_projects()
 
-        assert "test_project" not in agent._active_projects
+        assert not pm.is_active("test_project")
 
 
 class TestInitializeSession:
@@ -317,3 +310,243 @@ class TestInitializeSession:
             assert agent.get_session_manager().get_project_name("sess-auto") == registered.project_name
         finally:
             agent.on_shutdown(timeout=5)
+
+
+class TestPersistProjectState:
+    """Tests for SerenaAgent._persist_project_state() and _persist_all_projects()."""
+
+    def test_persist_creates_active_state_file(self, serena_agent_with_project, serena_config):
+        """Persist should create active_state.json in the project's .serena folder."""
+        agent = serena_agent_with_project
+        pm = agent._project_manager
+        pm.touch(next(iter(pm.get_all().values())))
+        pm.persist_all()
+
+        project_root = serena_config.projects[0].get_project_instance(serena_config).project_root
+        state_file = Path(project_root) / ".serena" / "active_state.json"
+        assert state_file.exists(), "active_state.json should be created"
+
+        import json
+
+        with open(state_file) as f:
+            state = json.load(f)
+
+        assert state["project_name"] == "test_project"
+        assert state["project_root"] == project_root
+        assert "lsp_running" in state
+        assert isinstance(state["lsp_running"], bool)
+
+    def test_persist_handles_missing_ls_manager(self):
+        """Persist should handle missing language server manager gracefully."""
+        config = SerenaConfig(gui_log_window=False, web_dashboard=False)
+        project_root = str(Path("/tmp/test_no_ls_project"))
+        Path(project_root).mkdir(exist_ok=True)
+        (Path(project_root) / ".serena").mkdir(exist_ok=True)
+
+        project_config = ProjectConfig(
+            project_name="test_no_ls",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=config,
+        )
+        agent = SerenaAgent(serena_config=config)
+        try:
+            # This should not crash even though the project has no LSP manager yet
+            agent._project_manager.persist(proj)
+        except Exception:
+            pytest.fail("Persist should handle missing LSP manager without crashing")
+        finally:
+            agent.on_shutdown(timeout=5)
+
+    def test_persist_preserves_last_active(self):
+        """Persist should preserve the last_active timestamp."""
+        serena_config_for_persist = SerenaConfig(gui_log_window=False, web_dashboard=False)
+        project_root = str(Path("/tmp/test_persist_timestamp"))
+        Path(project_root).mkdir(exist_ok=True)
+        (Path(project_root) / ".serena").mkdir(exist_ok=True)
+
+        project_config = ProjectConfig(
+            project_name="test_ts",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=serena_config_for_persist,
+        )
+        serena_config_for_persist.projects = [RegisteredProject.from_project_instance(proj)]
+
+        agent = SerenaAgent(project="test_ts", serena_config=serena_config_for_persist)
+        try:
+            pm = agent._project_manager
+            expected_ts = time.time()
+            pm._project_last_active["test_ts"] = expected_ts
+            pm.persist_all()
+
+            state_file = Path(project_root) / ".serena" / "active_state.json"
+            import json
+
+            with open(state_file) as f:
+                state = json.load(f)
+
+            assert abs(state["last_active"] - expected_ts) < 0.1
+        finally:
+            agent.on_shutdown(timeout=5)
+
+
+class TestRestoreProjectsFromDisk:
+    """Tests for SerenaAgent._restore_projects_from_disk()."""
+
+    def test_restore_restores_active_project(self, serena_config, tmp_path):
+        """Restored projects should be re-added to the active set."""
+        project_root = str(tmp_path / "test_restore")
+        Path(project_root).mkdir(exist_ok=True)
+        (Path(project_root) / ".serena").mkdir(exist_ok=True)
+
+        project_config = ProjectConfig(
+            project_name="test_restore",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=serena_config,
+        )
+        serena_config.projects = [RegisteredProject.from_project_instance(proj)]
+
+        # First agent: activate and persist
+        agent1 = SerenaAgent(project="test_restore", serena_config=serena_config)
+        pm1 = agent1._project_manager
+        assert pm1.is_active("test_restore")
+        pm1.touch(next(iter(pm1.get_all().values())))
+        pm1.persist_all()
+        agent1.on_shutdown(timeout=5)
+
+        # Fresh agent: restore (restore happens automatically in __init__,
+        # but we test via project_manager directly)
+        agent2 = SerenaAgent(serena_config=serena_config)
+        pm2 = agent2._project_manager
+
+        assert pm2.is_active("test_restore"), "Project should be restored via __init__"
+
+    def test_restore_skips_missing_state_file(self, serena_config, tmp_path):
+        """Restore should skip projects without an active_state.json file."""
+        project_root = str(tmp_path / "test_no_state")
+        Path(project_root).mkdir(exist_ok=True)
+        (Path(project_root) / ".serena").mkdir(exist_ok=True)
+
+        project_config = ProjectConfig(
+            project_name="test_no_state",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=serena_config,
+        )
+        serena_config.projects = [RegisteredProject.from_project_instance(proj)]
+
+        agent = SerenaAgent(serena_config=serena_config)
+        try:
+            # No state file exists, so restore should skip
+            agent._project_manager.restore_from_disk()
+            assert not agent._project_manager.is_active("test_no_state")
+        finally:
+            agent.on_shutdown(timeout=5)
+
+    def test_restore_skips_corrupted_state_file(self, serena_config, tmp_path):
+        """Restore should skip corrupted/invalid state files gracefully."""
+        project_root = str(tmp_path / "test_corrupted")
+        Path(project_root).mkdir(exist_ok=True)
+        serena_dir = Path(project_root) / ".serena"
+        serena_dir.mkdir(exist_ok=True)
+
+        # Write invalid JSON
+        (serena_dir / "active_state.json").write_text("{broken json content")
+
+        project_config = ProjectConfig(
+            project_name="test_corrupted",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=serena_config,
+        )
+        serena_config.projects = [RegisteredProject.from_project_instance(proj)]
+
+        agent = SerenaAgent(serena_config=serena_config)
+        try:
+            agent._project_manager.restore_from_disk()
+            assert not agent._project_manager.is_active("test_corrupted")
+        finally:
+            agent.on_shutdown(timeout=5)
+
+    def test_restore_sets_agent_on_restored_project(self, serena_config, tmp_path):
+        """Restored projects should have their agent reference set."""
+        project_root = str(tmp_path / "test_restore_agent")
+        Path(project_root).mkdir(exist_ok=True)
+        (Path(project_root) / ".serena").mkdir(exist_ok=True)
+
+        project_config = ProjectConfig(
+            project_name="test_restore_agent",
+            languages=[Language.PYTHON],
+            ignored_paths=[],
+            excluded_tools=[],
+            read_only=False,
+            ignore_all_files_in_gitignore=True,
+            initial_prompt="",
+            encoding="utf-8",
+        )
+        proj = Project(
+            project_root=project_root,
+            project_config=project_config,
+            serena_config=serena_config,
+        )
+        serena_config.projects = [RegisteredProject.from_project_instance(proj)]
+
+        agent1 = SerenaAgent(project="test_restore_agent", serena_config=serena_config)
+        pm1 = agent1._project_manager
+        pm1.touch(next(iter(pm1.get_all().values())))
+        pm1.persist_all()
+        agent1.on_shutdown(timeout=5)
+
+        agent2 = SerenaAgent(serena_config=serena_config)
+        pm2 = agent2._project_manager
+
+        restored = pm2.get_by_name("test_restore_agent")
+        assert restored is not None
+        assert restored._agent is agent2, "Restored project should have agent reference set"

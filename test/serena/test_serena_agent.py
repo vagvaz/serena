@@ -85,7 +85,8 @@ def read_project_file(project: Project, relative_path: str) -> str:
 @contextmanager
 def project_file_modification_context(serena_agent: SerenaAgent, relative_path: str) -> Iterator[None]:
     """Context manager to modify a project file and revert the changes after use."""
-    project = serena_agent.get_active_project()
+    projects = serena_agent.get_all_active_projects()
+    project = next(iter(projects.values()))
     file_path = os.path.join(project.project_root, relative_path)
 
     # Read the original content
@@ -585,7 +586,8 @@ class TestSerenaAgent:
                 mode=mode,
             )
             assert result == SUCCESS_RESULT
-            new_content = read_project_file(serena_agent.get_active_project(), relative_path)
+            projects = serena_agent.get_all_active_projects()
+            new_content = read_project_file(next(iter(projects.values())), relative_path)
             assert repl in new_content
 
     @pytest.mark.parametrize(
@@ -696,7 +698,8 @@ class TestSerenaAgent:
             assert result == SUCCESS_RESULT, f"Expected successful deletion, but got: {result}"
 
             # verify the symbol was actually removed from the file
-            file_content = read_project_file(serena_agent.get_active_project(), relative_path)
+            proj = serena_agent.get_all_active_projects()
+            file_content = read_project_file(next(iter(proj.values())), relative_path)
             assert name_path not in file_content, (
                 f"Expected symbol {name_path} to be removed from {relative_path}, but it still appears in the file content"
             )

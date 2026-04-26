@@ -99,7 +99,6 @@ class SetSessionProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
             return f"Error: Could not resolve project from '{project}'."
 
         canonical_name = project_instance.project_name
-        self.agent._session_projects[session_id] = canonical_name
         self.agent.get_session_manager().set_project(session_id, canonical_name)
 
         msg = f"Session bound to project '{canonical_name}'."
@@ -160,7 +159,7 @@ class ListActiveProjectsTool(Tool, ToolMarkerDoesNotRequireActiveProject, ToolMa
             languages = ", ".join(lang.value for lang in project.project_config.languages)
             ls_manager = project.language_server_manager
             lsp_status = "running" if ls_manager and ls_manager.is_running() else "not running"
-            last_active = self.agent._project_last_active.get(name)
+            last_active = self.agent._project_manager.get_last_active_timestamp(name)
             if last_active:
                 idle_seconds = time.time() - last_active
                 idle_str = f"{idle_seconds:.0f}s ago"
@@ -210,7 +209,7 @@ class GetProjectStatusTool(Tool, ToolMarkerDoesNotRequireActiveProject, ToolMark
                 active_langs = ls_manager.get_active_languages()
                 lines.append(f"  Active LSP languages: {', '.join(lang.value for lang in active_langs)}")
 
-        last_active = self.agent._project_last_active.get(project)
+        last_active = self.agent._project_manager.get_last_active_timestamp(project)
         if last_active:
             idle_seconds = time.time() - last_active
             lines.append(f"  Last active: {idle_seconds:.0f}s ago")

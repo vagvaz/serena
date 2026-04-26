@@ -23,6 +23,14 @@ class _DummyAgent:
     def get_active_project(self):
         return self._project
 
+    def get_active_project_by_name(self, name: str):
+        return self._project
+
+    def get_all_active_projects(self):
+        if self._project is None:
+            return {}
+        return {"dummy": self._project}
+
 
 def _make_dashboard(project_languages: list[Language] | None) -> SerenaDashboardAPI:
     project = None
