@@ -1141,6 +1141,10 @@ class SerenaAgent:
         template = JinjaTemplate(prompt_template)
         return template.render(available_tools=self._exposed_tools.tool_names, available_markers=self._exposed_tools.tool_marker_names)
 
+    def create_connection_prompt(self) -> str:
+        """Return the initial instructions prompt shown when an MCP client connects."""
+        return self.prompt_factory.create_connection_prompt()
+
     def create_system_prompt(self, session_id: str | None = None) -> str:
         if session_id is None:
             try:
