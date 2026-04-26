@@ -834,8 +834,10 @@ class SerenaDashboardAPI:
             language = Language(request_add_language.language)
         except ValueError:
             raise ValueError(f"Invalid language: {request_add_language.language}")
-        # add_language is already thread-safe
-        self._agent.add_language(language)
+        project = self._resolve_project()
+        if project is None:
+            raise ValueError("No active project to add language to.")
+        self._agent.add_language(language, project_name=project.project_name)
 
     def _remove_language(self, request_remove_language: RequestRemoveLanguage) -> None:
         from solidlsp.ls_config import Language
@@ -844,8 +846,10 @@ class SerenaDashboardAPI:
             language = Language(request_remove_language.language)
         except ValueError:
             raise ValueError(f"Invalid language: {request_remove_language.language}")
-        # remove_language is already thread-safe
-        self._agent.remove_language(language)
+        project = self._resolve_project()
+        if project is None:
+            raise ValueError("No active project to remove language from.")
+        self._agent.remove_language(language, project_name=project.project_name)
 
     @staticmethod
     def _find_first_free_port(start_port: int, host: str) -> int:

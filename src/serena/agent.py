@@ -543,10 +543,6 @@ class SerenaAgent:
         # propagate configuration to other components
         self.serena_config.propagate_settings()
 
-        # initialise active modes (baseline modes prior to project activation)
-        self._active_modes: ActiveModes
-        self._update_active_modes(log_message=False)
-
         # determine registered project to be activated (if any)
         registered_project_to_activate: RegisteredProject | None = (
             self.serena_config.get_registered_project(project, autoregister=True) if project is not None else None
@@ -638,6 +634,8 @@ class SerenaAgent:
         startup_project_instance: Project | None = None
         self._active_modes: ActiveModes
         self._mode_overrides = modes
+        self._project_activation_callback = project_activation_callback
+        self._project_prompt_status = ProjectPromptProvisionStatus()
         if project is not None:
             try:
                 _proj = self._project_manager.resolve_project(project, self.serena_config)
@@ -927,9 +925,10 @@ class SerenaAgent:
         """
         :return: the URL of the web dashboard, or None if the dashboard is not running
         """
-        if self._dashboard_manager is None:
+        dm = getattr(self, '_dashboard_manager', None)
+        if dm is None:
             return None
-        return self._dashboard_manager.url
+        return dm.url
 
     def open_dashboard(self) -> bool:
         """
@@ -937,7 +936,8 @@ class SerenaAgent:
 
         :return: True if the dashboard was opened, False if it could not be opened
         """
-        if self._dashboard_manager is None:
+        dm = getattr(self, '_dashboard_manager', None)
+        if dm is None:
             raise Exception("Dashboard is not running.")
 
         if not system_has_usable_display():
@@ -1182,7 +1182,7 @@ class SerenaAgent:
         if session_state and session_state.project_name:
             project = self._project_manager.get_by_name(session_state.project_name)
             if project is not None and not self._project_prompt_status.is_project_activation_message_already_provided(session_id):
-                system_prompt += "\n\n" + self._get_project_activation_message(project)
+                system_prompt += "\n\n" + self._get_project_activation_message(project, session_id=session_id)
 
         if session_state and session_state.persona_name:
             system_prompt += f"\nPersona: {session_state.persona_name}"
@@ -1190,8 +1190,10 @@ class SerenaAgent:
         log.info("System prompt:\n%s", system_prompt)
         return system_prompt
 
-    def _get_project_activation_message(self, project: Project) -> str:
+    def _get_project_activation_message(self, project: Project, session_id: str | None = None) -> str:
         """
+        :param project: the project that was activated
+        :param session_id: optional session ID for tracking prompt provision status
         :return: a message providing information about the given project upon activation.
         """
         proj = project
@@ -1466,30 +1468,51 @@ class SerenaAgent:
 
         return result_str
 
-    def reset_language_server_manager(self) -> None:
+    def reset_language_server_manager(self, project_name: str | None = None) -> None:
         """
-        Starts/resets the language server manager for the current project
-        """
-        self.get_active_project_or_raise().create_language_server_manager()
+        Resets the language server manager for the given project or the context project.
 
-    def add_language(self, language: Language) -> None:
+        :param project_name: explicit project name, or None to use the tool execution context
         """
-        Adds a new language to the active project, spawning the respective language server and updating the project configuration.
-        The addition is scheduled via the agent's task executor and executed synchronously, i.e. the method returns
-        when the addition is complete.
+        project = self._resolve_project_for_action(project_name)
+        project.create_language_server_manager()
+
+    def add_language(self, language: Language, project_name: str | None = None) -> None:
+        """
+        Adds a new language to the given project, spawning the respective language server.
 
         :param language: the language to add
+        :param project_name: explicit project name, or None to use the tool execution context
         """
-        self.execute_task(lambda: self.get_active_project_or_raise().add_language(language), name=f"AddLanguage:{language.value}")
+        project = self._resolve_project_for_action(project_name)
+        self.execute_task(lambda: project.add_language(language), name=f"AddLanguage:{language.value}")
 
-    def remove_language(self, language: Language) -> None:
+    def remove_language(self, language: Language, project_name: str | None = None) -> None:
         """
-        Removes a language from the active project, shutting down the respective language server and updating the project configuration.
-        The removal is scheduled via the agent's task executor and executed asynchronously.
+        Removes a language from the given project.
 
         :param language: the language to remove
+        :param project_name: explicit project name, or None to use the tool execution context
         """
-        self.issue_task(lambda: self.get_active_project_or_raise().remove_language(language), name=f"RemoveLanguage:{language.value}")
+        project = self._resolve_project_for_action(project_name)
+        self.issue_task(lambda: project.remove_language(language), name=f"RemoveLanguage:{language.value}")
+
+    def _resolve_project_for_action(self, project_name: str | None = None) -> Project:
+        """Resolve a project for an action by name or tool execution context."""
+        if project_name:
+            proj = self._project_manager.get_by_name(project_name)
+            if proj is None:
+                raise ValueError(f"Project '{project_name}' is not active.")
+            return proj
+        from serena.tools.tools_base import _current_project
+
+        proj = _current_project.get()
+        if proj is not None:
+            return proj
+        first = next(iter(self._project_manager.get_all().values()), None)
+        if first is None:
+            raise ValueError("No active project.")
+        return first
 
     def get_tool(self, tool_class: type[TTool]) -> TTool:
         return self._all_tools[tool_class]  # type: ignore
@@ -1499,7 +1522,10 @@ class SerenaAgent:
 
     def _on_projects_changed(self) -> None:
         """Callback invoked by ProjectManager after any project is added or removed."""
+        mode_names_before = set(self._active_modes.get_mode_names()) if hasattr(self, '_active_modes') else set()
         self._update_active_modes()
+        newly_activated = set(self._active_modes.get_mode_names()) - mode_names_before
+        self._project_prompt_status = ProjectPromptProvisionStatus(newly_activated_mode_names=newly_activated)
         self._update_active_tools()
 
     def __del__(self) -> None:
@@ -1510,15 +1536,18 @@ class SerenaAgent:
         Shutdown handler of the agent, freeing resources and stopping background tasks.
         """
         log.info("SerenaAgent is shutting down ...")
-        # Shut down all projects via ProjectManager
-        self._project_manager.shutdown_all(timeout=timeout)
+        # Shut down all projects via ProjectManager (guard for partial init failures)
+        if hasattr(self, '_project_manager') and self._project_manager is not None:
+            self._project_manager.shutdown_all(timeout=timeout)
         self._session_context_overrides.clear()
-        self._session_manager = SessionManager()
+        has_session_manager = hasattr(self, '_session_manager') and self._session_manager is not None
+        if has_session_manager:
+            self._session_manager = SessionManager()
         if self._gui_log_viewer:
             log.info("Stopping the GUI log window ...")
             self._gui_log_viewer.stop()
             self._gui_log_viewer = None
-        if self._dashboard_manager:
+        if hasattr(self, '_dashboard_manager') and self._dashboard_manager is not None:
             self._dashboard_manager.shutdown()
             self._dashboard_manager = None
 

@@ -54,12 +54,15 @@ class ActivateProjectTool(Tool, ToolMarkerDoesNotRequireActiveProject):
         if not is_new_activation:
             result = "Project was already active."
         else:
-            result = self.agent.get_project_activation_message()
+            # Find the activated project to generate the activation message
+            all_active = self.agent.get_all_active_projects()
+            active_project = next(iter(all_active.values())) if all_active else None
+            session_id = get_current_session_id()
+            result = self.agent._get_project_activation_message(active_project, session_id=session_id) if active_project else "Project activated."
             # Bind the current session to the newly activated project
             session_id = get_current_session_id()
-            if session_id:
-                project_instance = self.agent.get_active_project_or_raise()
-                self.agent.get_session_manager().set_project(session_id, project_instance.project_name)
+            if session_id and active_project:
+                self.agent.get_session_manager().set_project(session_id, active_project.project_name)
         result += "\nIMPORTANT: If you have not yet read the 'Serena Instructions Manual', do it now before continuing!"
         return result
 
