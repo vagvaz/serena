@@ -693,7 +693,7 @@ class SerenaAgent:
                 port,
                 self.serena_config.web_dashboard_listen_address,
                 self.serena_config.web_dashboard_open_on_launch,
-                self._active_project,
+                next(iter(self._project_manager.get_all().values()), None),
                 mode_str=self.serena_config.web_dashboard_interface,
             )
             log.info("Serena web dashboard started at %s", self._dashboard_manager.url)
