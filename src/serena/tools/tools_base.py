@@ -409,7 +409,7 @@ class Tool(Component):
                 return f"RuntimeError while checking if tool {self.get_name_from_cls()} is active: {e}"
 
             if log_call:
-                self._log_tool_application(inspect.currentframe())
+                self._log_tool_application(inspect.currentframe(), session_id or "global")
 
             # Execute within the resolved project's context and session context
             with project_context(target_project), log_context(
