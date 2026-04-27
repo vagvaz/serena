@@ -551,6 +551,8 @@ class SerenaDashboardAPI:
             except Exception:
                 pass
 
+            session_count = self._agent.get_session_manager().get_project_session_count(name)
+
             active_projects_info.append(
                 {
                     "name": name,
@@ -558,6 +560,7 @@ class SerenaDashboardAPI:
                     "languages": languages,
                     "lsp_running": lsp_running,
                     "idle_seconds": idle_seconds,
+                    "session_count": session_count,
                     "encoding": proj.project_config.encoding,
                     "read_only": proj.project_config.read_only,
                     "memories": project_memories,
@@ -590,11 +593,13 @@ class SerenaDashboardAPI:
         active_project_names = set(all_active.keys())
         registered_projects: list[dict[str, str | bool]] = []
         for proj in self._agent.serena_config.projects:
+            session_count = self._agent.get_session_manager().get_project_session_count(proj.project_name) if proj.project_name in active_project_names else 0
             registered_projects.append(
                 {
                     "name": proj.project_name,
                     "path": str(proj.project_root),
                     "is_active": proj.project_name in active_project_names,
+                    "session_count": session_count,
                 }
             )
 

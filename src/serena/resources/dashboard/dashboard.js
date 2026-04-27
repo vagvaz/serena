@@ -84,10 +84,11 @@ function renderProjectCards(projects, container) {
     const lsp = p.lsp_running ? '<span class="lsp-on">LSP</span>' : '<span class="lsp-off">LSP</span>';
     const idle = p.idle_seconds != null ? `<span class="idle">${fmtTime(p.idle_seconds)} idle</span>` : '';
     const readonly = p.read_only ? '<span style="background:var(--orange);color:#fff;font-size:10px;padding:2px7px;border-radius:3px">RO</span>' : '';
-    html += `<div class="project-card">
+      const sessions = p.session_count != null ? `<span class="idle" style="background:${p.session_count > 0 ? 'var(--accent-dim)' : 'var(--bg-elevated)'};color:${p.session_count > 0 ? 'var(--accent)' : 'var(--text-muted)'}">${p.session_count} session${p.session_count === 1 ? '' : 's'}</span>` : '';
+      html += `<div class="project-card">
       <div class="proj-name">${esc(p.name)}</div>
       <div class="proj-path" title="${esc(p.path)}">${esc(p.path)}</div>
-      <div class="proj-meta">${langs}${lsp}${idle}${readonly}</div>
+      <div class="proj-meta">${langs}${lsp}${idle}${sessions}${readonly}</div>
     </div>`;
   });
   $(container).html(html);
@@ -192,7 +193,8 @@ function renderRegisteredProjects(config) {
   if (!reg.length) { $('#registered-projects').html('<div class="config-section" style="text-align:center;padding:1rem;color:var(--text-muted)">No registered projects</div>'); return; }
   let html = '';
   reg.forEach(p => {
-    const status = p.is_active ? '<span class="rp-status rp-active">Active</span>' : '<span class="rp-status rp-inactive">Inactive</span>';
+    const sessions = p.session_count != null ? ` ${p.session_count} sess` : '';
+    const status = p.is_active ? `<span class="rp-status rp-active">Active${sessions}</span>` : '<span class="rp-status rp-inactive">Inactive</span>';
     html += `<div class="reg-proj-item"><span class="rp-name">${esc(p.name)}</span><span class="rp-path">${esc(p.path)}</span>${status}</div>`;
   });
   $('#registered-projects').html(html);
