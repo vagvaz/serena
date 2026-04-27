@@ -1531,6 +1531,11 @@ class SerenaAgent:
         newly_activated = set(self._active_modes.get_mode_names()) - mode_names_before
         self._project_prompt_status = ProjectPromptProvisionStatus(newly_activated_mode_names=newly_activated)
         self._update_active_tools()
+        # Notify dashboard manager of project change (for tray manager mode)
+        dm = getattr(self, '_dashboard_manager', None)
+        if dm is not None:
+            first = next(iter(self._project_manager.get_all().values()), None)
+            dm.update_active_project(first)
 
     def __del__(self) -> None:
         self.on_shutdown()
