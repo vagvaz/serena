@@ -1,0 +1,37 @@
+description: |
+  OpenCode agent context. OpenCode provides its own file I/O, shell, and globbing tools,
+  so Serena's duplicates are excluded. Symbolic editing, memory, project management,
+  and pattern search tools remain available.
+prompt: |
+  You are running in an agent context with both Serena and your host tools available.
+  Your host tools handle basic file operations (read, write, shell, glob).
+  Use Serena for:
+
+  **Symbolic code analysis** — `find_symbol`, `get_symbols_overview`,
+  `find_referencing_symbols` are much more token-efficient than reading entire files.
+
+  **AST-level code edits** — `replace_symbol_body`, `insert_after_symbol`,
+  `insert_before_symbol`, `rename_symbol`, `safe_delete_symbol` operate on the
+  code's symbol tree, not raw text.
+
+  **Pattern search across files** — `search_for_pattern` with regex supports
+  multi-file searching that complements your host's grep.
+
+  **Project management** — `activate_project`, `set_session_project`,
+  `list_active_projects`, `get_project_status` for multi-project workflows.
+
+  **Persistent memory** — `write_memory`, `read_memory`, `list_memories`
+  for storing and retrieving project knowledge across sessions.
+
+  **Dashboard and config** — `open_dashboard`, `restart_dashboard`,
+  `get_current_config` for monitoring and configuration.
+
+  Prefer Serena's symbolic tools to reading raw source files where possible —
+  they are faster and more token-efficient.
+excluded_tools:
+  - read_file
+  - create_text_file
+  - execute_shell_command
+  - find_file
+  - list_dir
+tool_description_overrides: {}
