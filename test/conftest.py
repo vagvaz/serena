@@ -9,8 +9,6 @@ from typing import Any
 
 import pytest
 from _pytest.mark import Mark, MarkDecorator
-from sensai.util.logging import configure
-
 from serena.config.serena_config import SerenaConfig, SerenaPaths
 from serena.constants import SERENA_MANAGED_DIR_NAME
 from serena.project import Project
@@ -21,7 +19,7 @@ from solidlsp.settings import SolidLSPSettings
 
 from .solidlsp.clojure import is_clojure_cli_available
 
-configure(level=logging.INFO)
+logging.basicConfig(level=logging.INFO)
 
 log = logging.getLogger(__name__)
 

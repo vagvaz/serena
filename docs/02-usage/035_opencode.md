@@ -162,6 +162,26 @@ Refresh the dashboard to confirm that each OpenCode instance has its own session
 | Logs lack session filter | Stale dashboard assets are cached. | Hard refresh (Ctrl+Shift+R) to load the latest frontend bundle. |
 | Auto-registration chose an unexpected project name | Directory lacked `.serena/project.yml`. | Edit the generated config or re-register with the desired name. |
 
+## Experimental Optional LSP Tools
+
+Serena ships additional LSP-based tools that are **disabled by default** and marked as **beta/experimental**.
+They provide functionality that not all language servers support (e.g., `textDocument/implementation`).
+
+| Tool | Description |
+|------|-------------|
+| `find_implementations` | Finds concrete implementations / overrides of a symbol (e.g., subclasses implementing an interface). |
+| `find_declaration` | Finds a symbol's declaration by matching a regex with a capture group against the source file (e.g., resolving a call like `obj.method()` to the declared method). |
+
+To enable these, set `included_optional_tools` in your `serena_config.yml` or `project.yml`:
+
+```yaml
+included_optional_tools:
+  - find_implementations
+  - find_declaration
+```
+
+You can also enable them per-session by defining a custom [mode or context](../02-usage/050_configuration.md#modes).
+
 ## Best Practices
 
 - Use `--auto-register` in shared daemon setups so each OpenCode connection can bring its own project path.

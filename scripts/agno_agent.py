@@ -1,8 +1,8 @@
+import logging
 from agno.models.anthropic.claude import Claude
 from agno.models.google.gemini import Gemini
 from agno.os import AgentOS
-from sensai.util import logging
-from sensai.util.helper import mark_used
+from serena.util.misc import mark_used
 
 from serena.agno import SerenaAgnoAgentProvider
 
@@ -10,7 +10,7 @@ mark_used(Gemini, Claude)
 
 # initialize logging
 if __name__ == "__main__":
-    logging.configure(level=logging.INFO)
+    logging.basicConfig(level=logging.INFO)
 
 # Define the model to use (see Agno documentation for supported models; these are just examples)
 # model = Claude(id="claude-3-7-sonnet-20250219")

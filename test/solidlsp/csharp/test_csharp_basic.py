@@ -1,3 +1,4 @@
+import logging
 import os
 import tempfile
 from pathlib import Path
@@ -5,7 +6,6 @@ from typing import cast
 from unittest.mock import Mock, patch
 
 import pytest
-from sensai.util import logging
 
 from serena.util.logging import SuspendedLoggersContext
 from solidlsp import SolidLanguageServer

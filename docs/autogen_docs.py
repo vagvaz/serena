@@ -5,7 +5,7 @@ import shutil
 from pathlib import Path
 from typing import Optional, List
 
-from sensai.util.string import TextBuilder
+from serena.util.string_utils import TextBuilder
 
 log = logging.getLogger(os.path.basename(__file__))
 

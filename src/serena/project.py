@@ -431,6 +431,11 @@ class Project(ToStringMixin):
             log.info(f"Creating language server manager for {self.project_root}")
             self._language_server_manager_init_error = None
             ls_specific_settings = {**self.serena_config.ls_specific_settings, **self.project_config.ls_specific_settings}
+            ls_cache_storage_mode = (
+                self.project_config.cache_storage_mode
+                or self.serena_config.cache_storage_mode
+                or "monolithic"
+            )
             factory = LanguageServerFactory(
                 project_root=self.project_root,
                 project_data_path=self._serena_data_folder,
@@ -439,6 +444,7 @@ class Project(ToStringMixin):
                 ls_timeout=ls_timeout,
                 ls_specific_settings=ls_specific_settings,
                 trace_lsp_communication=self.serena_config.trace_lsp_communication,
+                cache_storage_mode=ls_cache_storage_mode,
             )
             self.language_server_manager = LanguageServerManager.from_languages(self.project_config.languages, factory)
             return self.language_server_manager

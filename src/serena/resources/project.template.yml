@@ -55,6 +55,11 @@ ignore_all_files_in_gitignore: true
 # No documentation on options means no options are available.
 ls_specific_settings: {}
 
+# controls how symbol cache entries are stored on disk.
+# If not set, the global setting from serena_config.yml is used.
+# See serena_config.yml for possible values.
+cache_storage_mode:
+
 # list of additional paths to ignore in this project.
 # Same syntax as gitignore, so you can use * and **.
 # Note: global ignored_paths from serena_config.yml are also applied additively.
