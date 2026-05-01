@@ -81,7 +81,15 @@ class ProjectMemoryManager:
 
 ---
 
-## Candidate 4 — Decouple `_sanitize_for_openai_tools` from `mcp.py`
+## ✅ Candidate 4 — Decouple `_sanitize_for_openai_tools` from `mcp.py` (DONE)
+
+**Commit:** _(pending)_  
+**Created:** `src/serena/tool_schema.py` (OpenAIToolSchemaAdapter)  
+**Result:** mcp.py -105 lines of JSON Schema transformation logic moved to dedicated module.
+
+---
+
+## Candidate 5
 
 **Files:** `src/serena/mcp.py` (lines 87-197)  
 **Scope:** 110 lines of JSON Schema manipulation in a factory module

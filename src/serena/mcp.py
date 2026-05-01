@@ -6,7 +6,6 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
-from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -25,6 +24,7 @@ from serena.agent import (
 from serena.config.context_mode import SerenaAgentContext
 from serena.config.serena_config import LanguageBackend, ModeSelectionDefinition
 from serena.constants import DEFAULT_CONTEXT, SERENA_LOG_FORMAT
+from serena.tool_schema import OpenAIToolSchemaAdapter
 from serena.tools import Tool
 from serena.util.exception import show_fatal_exception_safe
 from serena.util.logging import MemoryLogHandler
@@ -83,109 +83,13 @@ class SerenaMCPFactory:
     @staticmethod
     def _sanitize_for_openai_tools(schema: dict) -> dict:
         """
-        This method was written by GPT-5, I have not reviewed it in detail.
-        Only called when `openai_tool_compatible` is True.
+        Delegates to OpenAIToolSchemaAdapter.sanitize().
 
-        Make a Pydantic/JSON Schema object compatible with OpenAI tool schema.
-        - 'integer' -> 'number' (+ multipleOf: 1)
-        - remove 'null' from union type arrays
-        - coerce integer-only enums to number
-        - best-effort simplify oneOf/anyOf when they only differ by integer/number
+        Kept as a static method for backward compatibility during the
+        refactoring transition; callers should use
+        ``OpenAIToolSchemaAdapter.sanitize()`` directly.
         """
-        s = deepcopy(schema)
-
-        def walk(node):  # type: ignore
-            if not isinstance(node, dict):
-                # lists get handled by parent calls
-                return node
-
-            # ---- handle type ----
-            t = node.get("type")
-            if isinstance(t, str):
-                if t == "integer":
-                    node["type"] = "number"
-                    # preserve existing multipleOf but ensure it's integer-like
-                    if "multipleOf" not in node:
-                        node["multipleOf"] = 1
-            elif isinstance(t, list):
-                # remove 'null' (OpenAI tools don't support nullables)
-                t2 = [x if x != "integer" else "number" for x in t if x != "null"]
-                if not t2:
-                    # fall back to object if it somehow becomes empty
-                    t2 = ["object"]
-                node["type"] = t2[0] if len(t2) == 1 else t2
-                if "integer" in t or "number" in t2:
-                    # if integers were present, keep integer-like restriction
-                    node.setdefault("multipleOf", 1)
-
-            # ---- enums of integers -> number ----
-            if "enum" in node and isinstance(node["enum"], list):
-                vals = node["enum"]
-                if vals and all(isinstance(v, int) for v in vals):
-                    node.setdefault("type", "number")
-                    # keep them as ints; JSON 'number' covers ints
-                    node.setdefault("multipleOf", 1)
-
-            # ---- simplify anyOf/oneOf if they only differ by integer/number ----
-            for key in ("oneOf", "anyOf"):
-                if key in node and isinstance(node[key], list):
-                    # Special case: anyOf or oneOf with "type X" and "null"
-                    if len(node[key]) == 2:
-                        types = [sub.get("type") for sub in node[key]]
-                        if "null" in types:
-                            non_null_type = next(t for t in types if t != "null")
-                            if isinstance(non_null_type, str):
-                                node["type"] = non_null_type
-                                node.pop(key, None)
-                                continue
-                    simplified = []
-                    changed = False
-                    for sub in node[key]:
-                        sub = walk(sub)  # recurse
-                        simplified.append(sub)
-                    # If all subs are the same after integer→number, collapse
-                    try:
-                        import json
-
-                        canon = [json.dumps(x, sort_keys=True) for x in simplified]
-                        if len(set(canon)) == 1:
-                            # copy the single schema up
-                            only = simplified[0]
-                            node.pop(key, None)
-                            for k, v in only.items():
-                                if k not in node:
-                                    node[k] = v
-                            changed = True
-                    except Exception:
-                        pass
-                    if not changed:
-                        node[key] = simplified
-
-            # ---- recurse into known schema containers ----
-            for child_key in ("properties", "patternProperties", "definitions", "$defs"):
-                if child_key in node and isinstance(node[child_key], dict):
-                    for k, v in list(node[child_key].items()):
-                        node[child_key][k] = walk(v)
-
-            # arrays/items
-            if "items" in node:
-                node["items"] = walk(node["items"])
-
-            # allOf/if/then/else - pass through with integer→number conversions applied inside
-            for key in ("allOf",):
-                if key in node and isinstance(node[key], list):
-                    node[key] = [walk(x) for x in node[key]]
-
-            if "if" in node:
-                node["if"] = walk(node["if"])
-            if "then" in node:
-                node["then"] = walk(node["then"])
-            if "else" in node:
-                node["else"] = walk(node["else"])
-
-            return node
-
-        return walk(s)
+        return OpenAIToolSchemaAdapter.sanitize(schema)
 
     @staticmethod
     def make_mcp_tool(tool: Tool, openai_tool_compatible: bool = True) -> MCPTool:
