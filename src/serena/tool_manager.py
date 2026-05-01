@@ -48,6 +48,8 @@ class AvailableTools:
         """
         self._tool_name_set = set(self.tool_names)
         self.tool_marker_names = set()
+        from serena.tools.tools_base import ToolMarker
+
         for marker_class in iter_subclasses(ToolMarker):
             for tool in tools:
                 if isinstance(tool, marker_class):
