@@ -6,110 +6,31 @@ Method: Parallel exploration of agent, tools, LSP, and CLI modules.
 
 ---
 
-## Candidate 1 — Extract `ToolManager` from SerenaAgent
+## ✅ Candidate 1 — Extract `ToolManager` from SerenaAgent (DONE)
 
-**Files:** `agent.py` (~1,610 lines, ~45 public methods)  
-**Scope:** Tool lifecycles distributed across agent.py
-
-### Problem
-
-SerenaAgent is a god class — 1,610 lines, ~45 public methods, depends on everything. Tool lifecycle is split across three distinct phases embedded in the agent:
-
-| Phase | Location in agent.py | What it does |
-|-------|---------------------|--------------|
-| Registration | `__init__` (lines ~608-626) | Instantiates all tool classes via `ToolRegistry`, assigns names |
-| Exposure | `_update_base_tool_set()` (lines ~796-840) | Applies context/environment filters to determine base tool set |
-| Activation | `_update_active_tools()` (lines ~904-930) | Applies mode + project filters on top of base set |
-
-These phases touch different parts of the agent's state (`_all_tools`, `_exposed_tools`, `_active_tools`, `_base_toolset`). Understanding how a tool becomes available requires reading across 300+ lines of agent.py. The methods interact implicitly: `_update_active_tools` depends on `_base_toolset` having been computed, which depends on `_update_base_tool_set` having been called, which depends on tool registration in `__init__`.
-
-**Deletion test:** If you delete the tool lifecycle code from agent.py, the complexity doesn't vanish — it reappears wherever anyone needs to know about tool availability. The ordering constraints between registration → exposure → activation are currently implicit.
-
-### Solution
-
-Extract a `ToolManager` class with an explicit 3-phase pipeline:
-
-```python
-class ToolManager:
-    def register_all(self) -> None:
-        """Phase 1: Discover and instantiate all tool classes via ToolRegistry."""
-        ...
-
-    def compute_base(self, context: SerenaAgentContext) -> None:
-        """Phase 2: Filter tools based on context/environment."""
-        ...
-
-    def compute_active(self, mode_manager: ModeManager) -> None:
-        """Phase 3: Apply mode + project filters to produce active tool set."""
-        ...
-
-    # Read access
-    @property
-    def all_tools(self) -> dict[type[Tool], Tool]: ...
-    @property
-    def exposed_tools(self) -> ToolSet: ...
-    @property
-    def active_tools(self) -> AvailableTools: ...
-```
-
-SerenaAgent holds a `ToolManager` instance and delegates. The implicit ordering constraint becomes an explicit pipeline.
-
-### Benefits
-
-- **Locality** — tool lifecycle logic is concentrated in one module, not scattered across agent.py
-- **Leverage** — three focused methods replace 100+ lines of inline orchestration in agent.py
-- **Testability** — tool activation logic can be tested with a ToolManager + mock ModeManager without a full SerenaAgent
-- **Seam** — `compute_base` and `compute_active` become obvious override points for different contexts
+**Commit:** `6288f8d1`  
+**Created:** `src/serena/tool_manager.py` (ToolManager, ToolSet, AvailableTools)  
+**Result:** agent.py -264 lines. Tool lifecycle concentrated in 3-method pipeline.
 
 ---
 
-## Candidate 2 — Extract `ModeManager` from SerenaAgent
+## ✅ Candidate 2 — Extract `ModeManager` from SerenaAgent (DONE)
 
-**Files:** `agent.py` (ActiveModes nested class at ~lines 217-270, `_update_active_modes` at ~1260-1300)  
-**Scope:** Mode management logic embedded inside agent.py
-
-### Problem
-
-Mode management is split across:
-- `ActiveModes` — a 53-line class defined *inside* agent.py (not importable)
-- `_update_active_modes` method — applies config, project, and override mode defs
-- `_session_mode_selection_definition` / `_mode_overrides` — two fields with overlapping purpose
-- Implicit cascade: mode changes must trigger tool recomputation via `_update_active_tools()`
-
-The mode resolution pipeline is: config → per-project → session definition → overrides. This is non-trivial logic buried in a private method. The cascade from mode → tool is implicit: every caller of `_update_active_modes` must remember to also call `_update_active_tools`.
-
-### Solution
-
-Extract a `ModeManager` class:
-
-```python
-class ModeManager:
-    def apply_config(self, config: SerenaConfig) -> None
-    def apply_project_config(self, config: ProjectConfig) -> None
-    def apply_session_definition(self, definition: ModeSelectionDefinition) -> None
-    def apply_overrides(self, overrides: ModeSelectionDefinition) -> None
-
-    @property
-    def active_modes(self) -> Sequence[SerenaAgentMode]: ...
-    @property
-    def tool_inclusion_definitions(self) -> list[...]: ...
-
-    # Explicit signal for the mode→tool cascade
-    on_modes_changed: Signal
-```
-
-Agent subscribes to `on_modes_changed` to trigger `_update_active_tools` — no implicit coupling.
-
-### Benefits
-
-- **Locality** — mode resolution logic concentrated, not split across __init__, update methods, and nested classes
-- **Leverage** — `ModeManager.active_modes` replaces scattered field access
-- **Testability** — can test mode composition from config/project/overrides without agent init
-- **Seam** — makes it possible to swap mode resolution strategy (e.g., different precedence rules per context)
+**Commit:** `5a8e0533`  
+**Created:** `src/serena/mode_manager.py` (ModeManager, ActiveModes)  
+**Result:** agent.py -70 lines. Mode resolution pipeline (config→projects→session→overrides) concentrated in ModeManager.
 
 ---
 
-## Candidate 3 — Narrow `Project`: extract `FileSystem` and `MemoryManager`
+## ✅ Candidate 3 — Narrow `Project`: extract `ProjectFileSystem` (DONE)
+
+**Commit:** _(pending)_  
+**Created:** `src/serena/file_system.py` (ProjectFileSystem)  
+**Result:** project.py -140 lines. File operations, ignore patterns, and source file discovery extracted to ProjectFileSystem. Project retains identity/config and LS management, delegates file ops to `project.filesystem`.
+
+---
+
+## Candidate 4
 
 **Files:** `project.py` (737 lines)  
 **Scope:** Project bundles config, file I/O, memories, LS creation

@@ -2,13 +2,10 @@ import logging
 import os
 import re
 import shutil
-import threading
 from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
-import pathspec
-from sensai.util.logging import LogTime
 from sensai.util.string import TextBuilder, ToStringMixin
 
 from serena.config.serena_config import (
@@ -17,12 +14,11 @@ from serena.config.serena_config import (
     SerenaPaths,
 )
 from serena.constants import SERENA_FILE_ENCODING
+from serena.file_system import ProjectFileSystem
 from serena.ls_manager import LanguageServerFactory, LanguageServerManager
-from serena.util.file_system import GitignoreParser, match_path
-from serena.util.text_utils import ContentReplacer, MatchedConsecutiveLines, search_files
+from serena.util.text_utils import ContentReplacer, MatchedConsecutiveLines
 from solidlsp import SolidLanguageServer
 from solidlsp.ls_config import Language
-from solidlsp.ls_utils import FileUtils
 
 if TYPE_CHECKING:
     from serena.agent import SerenaAgent
@@ -296,6 +292,9 @@ class Project(ToStringMixin):
         self.is_newly_created = is_newly_created
         self._agent: Optional["SerenaAgent"] = None
 
+        # create the file system adapter
+        self._filesystem = ProjectFileSystem(project_root, self.project_config, self.serena_config)
+
         # create .gitignore file in the project's Serena data folder if not yet present
         serena_data_gitignore_path = os.path.join(self._serena_data_folder, ".gitignore")
         if not os.path.exists(serena_data_gitignore_path):
@@ -305,45 +304,10 @@ class Project(ToStringMixin):
                 f.write(f"/{SolidLanguageServer.CACHE_FOLDER_NAME}\n")
                 f.write(f"/{ProjectConfig.SERENA_LOCAL_PROJECT_FILE}\n")
 
-        # prepare ignore spec asynchronously, ensuring immediate project activation.
-        self.__ignored_patterns: list[str] | None = None
-        self.__ignore_spec: pathspec.PathSpec | None = None
-        self._ignore_spec_available = threading.Event()
-        threading.Thread(name=f"gather-ignorespec[{self.project_config.project_name}]", target=self._gather_ignorespec, daemon=True).start()
-
-    def _gather_ignorespec(self) -> None:
-        with LogTime(f"Gathering ignore spec for project {self.project_config.project_name}", logger=log):
-            try:
-                # gather ignored paths from the global configuration, project configuration, and gitignore files
-                global_ignored_paths = self.serena_config.ignored_paths
-                ignored_patterns = list(global_ignored_paths) + list(self.project_config.ignored_paths)
-                if len(global_ignored_paths) > 0:
-                    log.info(f"Using {len(global_ignored_paths)} ignored paths from the global configuration.")
-                    log.debug(f"Global ignored paths: {list(global_ignored_paths)}")
-                if len(self.project_config.ignored_paths) > 0:
-                    log.info(f"Using {len(self.project_config.ignored_paths)} ignored paths from the project configuration.")
-                    log.debug(f"Project ignored paths: {self.project_config.ignored_paths}")
-                log.debug(f"Combined ignored patterns: {ignored_patterns}")
-                if self.project_config.ignore_all_files_in_gitignore:
-                    gitignore_parser = GitignoreParser(self.project_root)
-                    for spec in gitignore_parser.get_ignore_specs():
-                        log.debug(f"Adding {len(spec.patterns)} patterns from {spec.file_path} to the ignored paths.")
-                        ignored_patterns.extend(spec.patterns)
-                self.__ignored_patterns = ignored_patterns
-
-                # Set up the pathspec matcher for the ignored paths
-                # for all absolute paths in ignored_paths, convert them to relative paths
-                processed_patterns = []
-                for pattern in ignored_patterns:
-                    # Normalize separators (pathspec expects forward slashes)
-                    pattern = pattern.replace(os.path.sep, "/")
-                    processed_patterns.append(pattern)
-                log.debug(f"Processing {len(processed_patterns)} ignored paths")
-                self.__ignore_spec = pathspec.PathSpec.from_lines(pathspec.patterns.GitWildMatchPattern, processed_patterns)
-            except Exception as e:
-                log.error(f"Error while gathering ignore spec for project {self.project_config.project_name}: {e}", exc_info=e)
-
-        self._ignore_spec_available.set()
+    @property
+    def filesystem(self) -> ProjectFileSystem:
+        """Access the project file system adapter."""
+        return self._filesystem
 
     def _tostring_includes(self) -> list[str]:
         return []
@@ -390,194 +354,28 @@ class Project(ToStringMixin):
         return self.serena_config.get_project_yml_location(self.project_root)
 
     def read_file(self, relative_path: str) -> str:
-        """
-        Reads a file relative to the project root.
-
-        :param relative_path: the path to the file relative to the project root
-        :return: the content of the file
-        """
-        abs_path = Path(self.project_root) / relative_path
-        return FileUtils.read_file(str(abs_path), self.project_config.encoding)
-
-    @property
-    def _ignore_spec(self) -> pathspec.PathSpec:
-        """
-        :return: the pathspec matcher for the paths that were configured to be ignored,
-            either explicitly or implicitly through .gitignore files.
-        """
-        if not self._ignore_spec_available.is_set():
-            log.info("Waiting for ignore spec to become available ...")
-            self._ignore_spec_available.wait()
-            if self.__ignore_spec is not None:
-                log.info("Ignore spec is now available for project; proceeding")
-        if self.__ignore_spec is None:
-            raise ValueError(
-                "The ignore spec could not be computed; please check the log for errors and report here: https://github.com/oraios/serena/issues"
-            )
-        return self.__ignore_spec
-
-    @property
-    def _ignored_patterns(self) -> list[str]:
-        """
-        :return: the list of ignored path patterns
-        """
-        if not self._ignore_spec_available.is_set():
-            log.info("Waiting for ignored patterns to become available ...")
-            self._ignore_spec_available.wait()
-            if self.__ignored_patterns is not None:
-                log.info("Ignored patterns are now available for project; proceeding")
-        if self.__ignored_patterns is None:
-            raise ValueError(
-                "The ignored patterns could not be computed; please check the log for errors and report here: https://github.com/oraios/serena/issues"
-            )
-        return self.__ignored_patterns
-
-    def _is_ignored_relative_path(self, relative_path: str | Path, ignore_non_source_files: bool = True) -> bool:
-        """
-        Determine whether an existing path should be ignored based on file type and ignore patterns.
-        Raises `FileNotFoundError` if the path does not exist.
-
-        :param relative_path: Relative path to check
-        :param ignore_non_source_files: whether files that are not source files (according to the file masks
-            determined by the project's programming language) shall be ignored
-
-        :return: whether the path should be ignored
-        """
-        # special case, never ignore the project root itself
-        # If the user ignores hidden files, "." might match against the corresponding PathSpec pattern.
-        # The empty string also points to the project root and should never be ignored.
-        if str(relative_path) in [".", ""]:
-            return False
-
-        abs_path = os.path.join(self.project_root, relative_path)
-        if not os.path.exists(abs_path):
-            raise FileNotFoundError(f"File {abs_path} not found, the ignore check cannot be performed")
-
-        # Check file extension if it's a file
-        is_file = os.path.isfile(abs_path)
-        if is_file and ignore_non_source_files:
-            is_file_in_supported_language = False
-            for language in self.project_config.languages:
-                fn_matcher = language.get_source_fn_matcher()
-                if fn_matcher.is_relevant_filename(abs_path):
-                    is_file_in_supported_language = True
-                    break
-            if not is_file_in_supported_language:
-                return True
-
-        # Create normalized path for consistent handling
-        rel_path = Path(relative_path)
-
-        # always ignore paths inside .git
-        if len(rel_path.parts) > 0 and ".git" in rel_path.parts:
-            return True
-
-        return match_path(str(relative_path), self._ignore_spec, root_path=self.project_root)
+        """Read a file relative to the project root. Delegates to ProjectFileSystem."""
+        return self._filesystem.read_file(relative_path)
 
     def is_ignored_path(self, path: str | Path, ignore_non_source_files: bool = False) -> bool:
-        """
-        Checks whether the given path is ignored
-
-        :param path: the path to check, can be absolute or relative
-        :param ignore_non_source_files: whether to ignore files that are not source files
-            (according to the file masks determined by the project's programming language)
-        """
-        path = Path(path)
-        if path.is_absolute():
-            try:
-                relative_path = path.relative_to(self.project_root)
-            except ValueError:
-                # If the path is not relative to the project root, we consider it as an absolute path outside the project
-                # (which we ignore)
-                log.warning(f"Path {path} is not relative to the project root {self.project_root} and was therefore ignored")
-                return True
-        else:
-            relative_path = path
-
-        return self._is_ignored_relative_path(str(relative_path), ignore_non_source_files=ignore_non_source_files)
+        """Check whether the given path is ignored. Delegates to ProjectFileSystem."""
+        return self._filesystem.is_ignored_path(path, ignore_non_source_files=ignore_non_source_files)
 
     def is_path_in_project(self, path: str | Path) -> bool:
-        """
-        Checks if the given (absolute or relative) path is inside the project directory.
-
-        Note: This is intended to catch cases where ".." segments would lead outside of the project directory,
-        but we intentionally allow symlinks, as the assumption is that they point to relevant project files.
-        """
-        if not os.path.isabs(path):
-            path = os.path.join(self.project_root, path)
-
-        # collapse any ".." or "." segments (purely lexically)
-        path = os.path.normpath(path)
-
-        try:
-            return os.path.commonpath([self.project_root, path]) == self.project_root
-        except ValueError:
-            # occurs, in particular, if paths are on different drives on Windows
-            return False
+        """Check if the given path is inside the project directory. Delegates to ProjectFileSystem."""
+        return self._filesystem.is_path_in_project(path)
 
     def relative_path_exists(self, relative_path: str) -> bool:
-        """
-        Checks if the given relative path exists in the project directory.
-
-        :param relative_path: the path to check, relative to the project root
-        :return: True if the path exists, False otherwise
-        """
-        abs_path = Path(self.project_root) / relative_path
-        return abs_path.exists()
+        """Check if the given relative path exists. Delegates to ProjectFileSystem."""
+        return self._filesystem.relative_path_exists(relative_path)
 
     def validate_relative_path(self, relative_path: str, require_not_ignored: bool = False) -> None:
-        """
-        Validates that the given relative path to an existing file/dir is safe to read or edit,
-        meaning it's inside the project directory.
-
-        Passing a path to a non-existing file will lead to a `FileNotFoundError`.
-
-        :param relative_path: the path to validate, relative to the project root
-        :param require_not_ignored: if True, the path must not be ignored according to the project's ignore settings
-        """
-        if not self.is_path_in_project(relative_path):
-            raise ValueError(f"{relative_path=} points to path outside of the repository root; cannot access for safety reasons")
-
-        if require_not_ignored:
-            if self.is_ignored_path(relative_path):
-                raise ValueError(f"Path {relative_path} is ignored; cannot access for safety reasons")
+        """Validate that the given relative path is safe. Delegates to ProjectFileSystem."""
+        self._filesystem.validate_relative_path(relative_path, require_not_ignored=require_not_ignored)
 
     def gather_source_files(self, relative_path: str = "") -> list[str]:
-        """Retrieves relative paths of all source files, optionally limited to the given path
-
-        :param relative_path: if provided, restrict search to this path
-        """
-        rel_file_paths = []
-        start_path = os.path.join(self.project_root, relative_path)
-        if not os.path.exists(start_path):
-            raise FileNotFoundError(f"Relative path {start_path} not found.")
-        if os.path.isfile(start_path):
-            return [relative_path]
-        else:
-            for root, dirs, files in os.walk(start_path, followlinks=True):
-                # prevent recursion into ignored directories
-                dirs[:] = [d for d in dirs if not self.is_ignored_path(os.path.join(root, d))]
-
-                # collect non-ignored files
-                for file in files:
-                    abs_file_path = os.path.join(root, file)
-                    try:
-                        if not self.is_ignored_path(abs_file_path, ignore_non_source_files=True):
-                            try:
-                                rel_file_path = os.path.relpath(abs_file_path, start=self.project_root)
-                            except Exception:
-                                log.warning(
-                                    "Ignoring path '%s' because it appears to be outside of the project root (%s)",
-                                    abs_file_path,
-                                    self.project_root,
-                                )
-                                continue
-                            rel_file_paths.append(rel_file_path)
-                    except FileNotFoundError:
-                        log.warning(
-                            f"File {abs_file_path} not found (possibly due it being a symlink), skipping it in request_parsed_files",
-                        )
-            return rel_file_paths
+        """Retrieve relative paths of all source files. Delegates to ProjectFileSystem."""
+        return self._filesystem.gather_source_files(relative_path=relative_path)
 
     def search_source_files_for_pattern(
         self,
@@ -588,23 +386,10 @@ class Project(ToStringMixin):
         paths_include_glob: str | None = None,
         paths_exclude_glob: str | None = None,
     ) -> list[MatchedConsecutiveLines]:
-        """
-        Search for a pattern across all (non-ignored) source files
-
-        :param pattern: Regular expression pattern to search for, either as a compiled Pattern or string
-        :param relative_path:
-        :param context_lines_before: Number of lines of context to include before each match
-        :param context_lines_after: Number of lines of context to include after each match
-        :param paths_include_glob: Glob pattern to filter which files to include in the search
-        :param paths_exclude_glob: Glob pattern to filter which files to exclude from the search. Takes precedence over paths_include_glob.
-        :return: List of matched consecutive lines with context
-        """
-        relative_file_paths = self.gather_source_files(relative_path=relative_path)
-        return search_files(
-            relative_file_paths,
+        """Search for a pattern across source files. Delegates to ProjectFileSystem."""
+        return self._filesystem.search_source_files_for_pattern(
             pattern,
-            root_path=self.project_root,
-            file_reader=self.read_file,
+            relative_path=relative_path,
             context_lines_before=context_lines_before,
             context_lines_after=context_lines_after,
             paths_include_glob=paths_include_glob,
@@ -614,23 +399,11 @@ class Project(ToStringMixin):
     def retrieve_content_around_line(
         self, relative_file_path: str, line: int, context_lines_before: int = 0, context_lines_after: int = 0
     ) -> MatchedConsecutiveLines:
-        """
-        Retrieve the content of the given file around the given line.
-
-        :param relative_file_path: The relative path of the file to retrieve the content from
-        :param line: The line number to retrieve the content around
-        :param context_lines_before: The number of lines to retrieve before the given line
-        :param context_lines_after: The number of lines to retrieve after the given line
-
-        :return MatchedConsecutiveLines: A container with the desired lines.
-        """
-        file_contents = self.read_file(relative_file_path)
-        return MatchedConsecutiveLines.from_file_contents(
-            file_contents,
-            line=line,
+        """Retrieve content around a line. Delegates to ProjectFileSystem."""
+        return self._filesystem.retrieve_content_around_line(
+            relative_file_path, line=line,
             context_lines_before=context_lines_before,
             context_lines_after=context_lines_after,
-            source_file_path=relative_file_path,
         )
 
     def create_language_server_manager(self) -> LanguageServerManager:
@@ -662,7 +435,7 @@ class Project(ToStringMixin):
                 project_root=self.project_root,
                 project_data_path=self._serena_data_folder,
                 encoding=self.project_config.encoding,
-                ignored_patterns=self._ignored_patterns,
+                ignored_patterns=self._filesystem._ignored_patterns,
                 ls_timeout=ls_timeout,
                 ls_specific_settings=ls_specific_settings,
                 trace_lsp_communication=self.serena_config.trace_lsp_communication,
