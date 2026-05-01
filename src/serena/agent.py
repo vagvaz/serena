@@ -36,11 +36,9 @@ from serena.config.serena_config import (
     ModeSelectionDefinition,
     ModeSelectionDefinitionWithAddedModes,
     ModeSelectionDefinitionWithBaseModes,
-    NamedToolInclusionDefinition,
     RegisteredProject,
     SerenaConfig,
     SerenaPaths,
-    ToolInclusionDefinition,
 )
 from serena.dashboard import SerenaDashboardAPI, SerenaDashboardTrayManager, SerenaDashboardViewer, open_url_in_browser
 from serena.ls_manager import LanguageServerManager
@@ -49,19 +47,10 @@ from serena.project_manager import ProjectManager
 from serena.prompt_factory import SerenaPromptFactory
 from serena.task_executor import TaskExecutor
 from serena.session_manager import SessionManager, SessionState
+from serena.tool_manager import ToolManager
 from serena.tools import (
-    ActivateProjectTool,
-    DeactivateProjectTool,
-    GetCurrentConfigTool,
-    GetProjectStatusTool,
-    ListActiveProjectsTool,
-    OpenDashboardTool,
     ReadMemoryTool,
-    ReplaceContentTool,
-    SetSessionProjectTool,
     Tool,
-    ToolMarker,
-    ToolRegistry,
 )
 from serena.util.gui import system_has_usable_display
 from serena.util.inspection import iter_subclasses
@@ -81,134 +70,7 @@ class ProjectNotFoundError(Exception):
     pass
 
 
-class AvailableTools:
-    """
-    Represents the set of available/exposed tools of a SerenaAgent.
-    """
 
-    def __init__(self, tools: list[Tool]):
-        """
-        :param tools: the list of available tools
-        """
-        self.tools = tools
-        self.tool_names = sorted([tool.get_name_from_cls() for tool in tools])
-        """
-        the list of available tool names, sorted alphabetically
-        """
-        self._tool_name_set = set(self.tool_names)
-        self.tool_marker_names = set()
-        for marker_class in iter_subclasses(ToolMarker):
-            for tool in tools:
-                if isinstance(tool, marker_class):
-                    self.tool_marker_names.add(marker_class.__name__)
-
-    def __len__(self) -> int:
-        return len(self.tools)
-
-    def contains_tool_name(self, tool_name: str) -> bool:
-        return tool_name in self._tool_name_set
-
-    def contains_tool_class(self, tool_class: type[Tool]) -> bool:
-        return self.contains_tool_name(tool_class.get_name_from_cls())
-
-
-class ToolSet:
-    """
-    Represents a set of tools by their names.
-    """
-
-    LEGACY_TOOL_NAME_MAPPING = {"replace_regex": ReplaceContentTool.get_name_from_cls()}
-    """
-    maps legacy tool names to their new names for backward compatibility
-    """
-
-    def __init__(self, tool_names: set[str]) -> None:
-        self._tool_names = tool_names
-
-    def __len__(self) -> int:
-        return len(self._tool_names)
-
-    @classmethod
-    def default(cls) -> "ToolSet":
-        """
-        :return: the default tool set, which contains all tools that are enabled by default
-        """
-        from serena.tools import ToolRegistry
-
-        return cls(set(ToolRegistry().get_tool_names_default_enabled()))
-
-    def apply(self, *tool_inclusion_definitions: "ToolInclusionDefinition") -> "ToolSet":
-        """
-        Applies one or more tool inclusion definitions to this tool set,
-        resulting in a new tool set.
-
-        :param tool_inclusion_definitions: the definitions to apply
-        :return: a new tool set with the definitions applied
-        """
-        from serena.tools import ToolRegistry
-
-        def get_updated_tool_name(tool_name: str) -> str:
-            """Retrieves the updated tool name if the provided tool name is deprecated, logging a warning."""
-            if tool_name in self.LEGACY_TOOL_NAME_MAPPING:
-                new_tool_name = self.LEGACY_TOOL_NAME_MAPPING[tool_name]
-                log.warning("Tool name '%s' is deprecated, please use '%s' instead", tool_name, new_tool_name)
-                return new_tool_name
-            return tool_name
-
-        registry = ToolRegistry()
-        tool_names = set(self._tool_names)
-        for definition in tool_inclusion_definitions:
-            if definition.is_fixed_tool_set():
-                tool_names = set()
-                for fixed_tool in definition.fixed_tools:
-                    fixed_tool = get_updated_tool_name(fixed_tool)
-                    if registry.check_valid_tool_name(fixed_tool, " (in fixed tools set)"):
-                        tool_names.add(fixed_tool)
-                log.info(f"{definition} defined a fixed tool set with {len(tool_names)} tools: {', '.join(tool_names)}")
-            else:
-                included_tools = []
-                excluded_tools = []
-                for included_tool in definition.included_optional_tools:
-                    included_tool = get_updated_tool_name(included_tool)
-                    if registry.check_valid_tool_name(included_tool, " (in included optional tools)") and included_tool not in tool_names:
-                        tool_names.add(included_tool)
-                        included_tools.append(included_tool)
-                for excluded_tool in definition.excluded_tools:
-                    excluded_tool = get_updated_tool_name(excluded_tool)
-                    registry.check_valid_tool_name(excluded_tool, " (in excluded tools)")
-                    if excluded_tool in tool_names:
-                        tool_names.remove(excluded_tool)
-                        excluded_tools.append(excluded_tool)
-                if included_tools:
-                    log.info(f"{definition} included {len(included_tools)} tools: {', '.join(included_tools)}")
-                if excluded_tools:
-                    log.info(f"{definition} excluded {len(excluded_tools)} tools: {', '.join(excluded_tools)}")
-        return ToolSet(tool_names)
-
-    def without_editing_tools(self) -> "ToolSet":
-        """
-        :return: a new tool set that excludes all tools that can edit
-        """
-        from serena.tools import ToolRegistry
-
-        registry = ToolRegistry()
-        tool_names = set(self._tool_names)
-        for tool_name in self._tool_names:
-            if registry.get_tool_class_by_name(tool_name).can_edit():
-                tool_names.remove(tool_name)
-        return ToolSet(tool_names)
-
-    def get_tool_names(self) -> set[str]:
-        """
-        Returns the names of the tools that are currently included in the tool set.
-        """
-        return self._tool_names
-
-    def includes_name(self, tool_name: str) -> bool:
-        return tool_name in self._tool_names
-
-    def to_available_tools(self, all_tools: dict[type[Tool], Tool]) -> AvailableTools:
-        return AvailableTools([t for t in all_tools.values() if self.includes_name(t.get_name())])
 
 
 class ActiveModes:
@@ -600,9 +462,9 @@ class SerenaAgent:
             context = SerenaAgentContext.load_default()
         self._context = context
 
-        # instantiate all tool classes
-        self._all_tools: dict[type[Tool], Tool] = {tool_class: tool_class(self) for tool_class in ToolRegistry().get_all_tool_classes()}
-        tool_names = [tool.get_name_from_cls() for tool in self._all_tools.values()]
+        # instantiate all tool classes via ToolManager
+        self._tool_manager = ToolManager()
+        tool_names = self._tool_manager.register_all(self)
 
         # If GUI log window is enabled, set the tool names for highlighting
         if self._gui_log_viewer is not None:
@@ -619,7 +481,7 @@ class SerenaAgent:
         )
         log.info("Configuration file: %s", self.serena_config.config_file_path)
         log.info("Available projects: {}".format(", ".join(self.serena_config.project_names)))
-        log.info(f"Loaded tools ({len(self._all_tools)}): {', '.join([tool.get_name_from_cls() for tool in self._all_tools.values()])}")
+        log.info(f"Loaded tools ({len(self._tool_manager.all_tools)}): {', '.join([tool.get_name_from_cls() for tool in self._tool_manager.all_tools.values()])}")
 
         self._check_shell_settings()
 
@@ -669,15 +531,12 @@ class SerenaAgent:
         self._update_active_modes()
 
         # determine the base toolset defining the set of exposed tools (which e.g. the MCP shall see),
-        self._base_toolset = self._create_base_toolset(
+        self._tool_manager.compute_base(
             self.serena_config, self._language_backend, self._context, self._active_modes, startup_project_instance
         )
-        self._exposed_tools = self._base_toolset.to_available_tools(self._all_tools)
-        log.info(f"Number of exposed tools: {len(self._exposed_tools)}. Exposed tools: {self._exposed_tools.tool_names}")
 
         # update the active tools (considering the active project, if any)
-        self._active_tools: AvailableTools
-        self._update_active_tools()
+        self._tool_manager.compute_active(self._active_modes, self._project_manager)
 
         # Restore previously active projects from disk state
         # (set_agent is called inside the restore loop below)
@@ -779,94 +638,21 @@ class SerenaAgent:
         except Exception as e:
             log.debug(f"Failed to send usage info: {e}")
 
-    @classmethod
     def _create_base_toolset(
-        cls,
+        self,
         serena_config: SerenaConfig,
         language_backend: LanguageBackend,
         context: SerenaAgentContext,
         modes: ActiveModes,
         project: Project | None,
-    ) -> ToolSet:
+    ) -> None:
         """
-        Determines the base toolset defining the set of exposed tools (which e.g. the MCP shall see).
-        It depends on ...
-           * dashboard availability/opening on launch
-           * Serena config
-           * the context (which is fixed for the session)
-           * the optional tools enabled by initial modes
-           * single-project mode reductions (if applicable)
-           * JetBrains mode
+        Delegates to ToolManager.compute_base() to determine the exposed tool set.
+
+        Kept as an instance method for backward compatibility during the refactoring
+        transition; callers should use self._tool_manager.compute_base() directly.
         """
-        # determine whether to include the OpenDashboardTool based on the Serena configuration
-        tool_inclusion_definitions: list[ToolInclusionDefinition] = []
-        if serena_config.web_dashboard and not serena_config.web_dashboard_open_on_launch and not serena_config.gui_log_window:
-            tool_inclusion_definitions.append(
-                NamedToolInclusionDefinition(name="OpenDashboard", included_optional_tools=[OpenDashboardTool.get_name_from_cls()])
-            )
-
-        # consider Serena configuration and the active context
-        tool_inclusion_definitions.append(serena_config)
-        tool_inclusion_definitions.append(context)
-
-        # determine whether we are operating in a single-project context
-        # (i.e. the project that is activated at startup is the only project that will be worked with throughout the session)
-        is_single_project = context.single_project and project is not None
-
-        # consider modes
-        # * base modes: These cannot be changed, so they are fully applied
-        for base_mode in modes.get_base_modes():
-            tool_inclusion_definitions.append(base_mode)
-        # * dynamically activated modes:
-        #    - When not in a single-project context, these modes can later be turned off,
-        #      so we consider only their inclusions (but not their exclusions, because these must not be hard).
-        #    - In a single-project context, we can consider them fully.
-        for mode in modes.get_dynamically_activated_modes():
-            if is_single_project:
-                tool_inclusion_definitions.append(mode)
-            else:
-                # Since modes can be dynamically turned on and off, we don't include their definitions directly,
-                # For the initially active dynamic modes, we make sure that the tools they enable are included.
-                tool_inclusion_definitions.append(
-                    NamedToolInclusionDefinition(
-                        name=f"InitialDynamicModeInclusions[{mode.name}]", included_optional_tools=mode.included_optional_tools
-                    )
-                )
-
-        # When in a single-project context, the agent is assumed to work on a single project, and we thus
-        # want to apply that project's tool exclusions/inclusions from the get-go, limiting the set
-        # of tools that will be exposed to the client.
-        # Furthermore, we disable tools that are only relevant for project activation.
-        # So if the project exists, we apply all the aforementioned exclusions.
-        if is_single_project:
-            assert project is not None
-            log.info(
-                "Applying tool inclusion/exclusion definitions for single-project context based on project '%s'",
-                project.project_name,
-            )
-            tool_inclusion_definitions.append(
-                NamedToolInclusionDefinition(
-                    name="SingleProjectExclusions",
-                    excluded_tools=[
-                        ActivateProjectTool.get_name_from_cls(),
-                        DeactivateProjectTool.get_name_from_cls(),
-                        SetSessionProjectTool.get_name_from_cls(),
-                        ListActiveProjectsTool.get_name_from_cls(),
-                        GetProjectStatusTool.get_name_from_cls(),
-                        GetCurrentConfigTool.get_name_from_cls(),
-                    ],
-                )
-            )
-            tool_inclusion_definitions.append(project.project_config)
-
-        # enabled the internal 'jetbrains' mode for the JetBrains backend
-        if language_backend == LanguageBackend.JETBRAINS:
-            tool_inclusion_definitions.append(SerenaAgentMode.from_name_internal("jetbrains"))
-
-        # compute the resulting tool set
-        base_toolset = ToolSet.default().apply(*tool_inclusion_definitions)
-        log.info(f"Number of exposed tools: {len(base_toolset)}")
-        return base_toolset
+        self._tool_manager.compute_base(serena_config, language_backend, context, modes, project)
 
     def get_language_backend(self) -> LanguageBackend:
         return self._language_backend
@@ -979,7 +765,7 @@ class SerenaAgent:
             If a client should attempt to use a tool that is dynamically disabled
             (e.g. because a project is activated that disables it), it will receive an error.
         """
-        return list(self._exposed_tools.tools)
+        return list(self._tool_manager.exposed_tools.tools)
 
     # ── Project query methods (delegate to ProjectManager) ─────────────────
 
@@ -1150,7 +936,7 @@ class SerenaAgent:
 
     def _format_prompt(self, prompt_template: str) -> str:
         template = JinjaTemplate(prompt_template)
-        return template.render(available_tools=self._exposed_tools.tool_names, available_markers=self._exposed_tools.tool_marker_names)
+        return template.render(available_tools=self._tool_manager.exposed_tools.tool_names, available_markers=self._tool_manager.exposed_tools.tool_marker_names)
 
     def create_connection_prompt(self) -> str:
         """Return the initial instructions prompt shown when an MCP client connects."""
@@ -1169,7 +955,7 @@ class SerenaAgent:
         context_override = self._session_context_overrides.get(session_id) if session_id else None
         effective_context = context_override or self._context
 
-        available_tools = self._active_tools
+        available_tools = self._tool_manager.active_tools
         available_markers = available_tools.tool_marker_names
         tool_names = available_tools.tool_names
         if session_state and session_state.tool_allowlist:
@@ -1233,7 +1019,7 @@ class SerenaAgent:
         msg += f"File encoding: {proj.project_config.encoding}."
 
         # add list of memories (if memories are enabled)
-        include_memories = self._active_tools.contains_tool_class(ReadMemoryTool)
+        include_memories = self._tool_manager.active_tools.contains_tool_class(ReadMemoryTool)
         if include_memories:
             project_memories = proj.memories_manager.list_project_memories()
             if project_memories:
@@ -1276,31 +1062,8 @@ class SerenaAgent:
             log.info(f"Active modes ({len(active_mode_names)}): {', '.join(active_mode_names)}")
 
     def _update_active_tools(self) -> None:
-        """
-        Updates the active tools based on the active modes and the active projects.
-        The base tool set already takes the Serena configuration and the context into account
-        (as well as many other aspects, such as JetBrains mode).
-        """
-        # apply modes
-        tool_set = self._base_toolset.apply(*self._active_modes.get_modes())
-
-        # apply active project configurations (if any)
-        for project in self._project_manager.get_all().values():
-            tool_set = tool_set.apply(project.project_config)
-            if project.project_config.read_only:
-                tool_set = tool_set.without_editing_tools()
-
-        self._active_tools = tool_set.to_available_tools(self._all_tools)
-        log.info(f"Active tools ({len(self._active_tools)}): {', '.join(self._active_tools.tool_names)}")
-
-        # check if a tool was activated that is not in the exposed tool set and issue a warning if so
-        active_tools_not_exposed = set(self._active_tools.tool_names) - set(self._exposed_tools.tool_names)
-        if active_tools_not_exposed:
-            log.warning(
-                "The following active tools are not in the exposed tool set and thus won't be available to clients:\n"
-                f"{active_tools_not_exposed}\n"
-                "Consider adjusting your configuration to include these tools if you want to use them."
-            )
+        """Update active tools by delegating to ToolManager.compute_active()."""
+        self._tool_manager.compute_active(self._active_modes, self._project_manager)
 
     def issue_task(
         self,
@@ -1418,21 +1181,21 @@ class SerenaAgent:
         """
         :return: the list of names of the active tools for the current project, sorted alphabetically
         """
-        return self._active_tools.tool_names
+        return self._tool_manager.active_tools.tool_names
 
     def tool_is_active(self, tool_name: str) -> bool:
         """
         :param tool_class: the name of the tool to check
         :return: True if the tool is active, False otherwise
         """
-        return self._active_tools.contains_tool_name(tool_name)
+        return self._tool_manager.active_tools.contains_tool_name(tool_name)
 
     def tool_is_exposed(self, tool_name: str) -> bool:
         """
         :param tool_name: the name of the tool to check
         :return: True if the tool is in the exposed tool set, False otherwise
         """
-        return self._exposed_tools.contains_tool_name(tool_name)
+        return self._tool_manager.exposed_tools.contains_tool_name(tool_name)
 
     def get_current_config_overview(self) -> str:
         """
@@ -1475,7 +1238,7 @@ class SerenaAgent:
             result_str += "  " + ", ".join(chunk) + "\n"
 
         # Available but not active tools
-        all_tool_names = sorted([tool.get_name_from_cls() for tool in self._all_tools.values()])
+        all_tool_names = sorted([tool.get_name_from_cls() for tool in self._tool_manager.all_tools.values()])
         inactive_tool_names = [tool for tool in all_tool_names if tool not in active_tool_names]
         if inactive_tool_names:
             result_str += "Available but not active tools:\n"
@@ -1532,10 +1295,12 @@ class SerenaAgent:
         return first
 
     def get_tool(self, tool_class: type[TTool]) -> TTool:
-        return self._all_tools[tool_class]  # type: ignore
+        return self._tool_manager.all_tools[tool_class]  # type: ignore
 
     def print_tool_overview(self) -> None:
-        ToolRegistry().print_tool_overview(self._active_tools.tools)
+        from serena.tools import ToolRegistry
+
+        ToolRegistry().print_tool_overview(self._tool_manager.active_tools.tools)
 
     def _on_projects_changed(self) -> None:
         """Callback invoked by ProjectManager after any project is added or removed."""
@@ -1584,6 +1349,8 @@ class SerenaAgent:
         os.kill(os.getpid(), signal.SIGTERM)
 
     def get_tool_by_name(self, tool_name: str) -> Tool:
+        from serena.tools import ToolRegistry
+
         tool_class = ToolRegistry().get_tool_class_by_name(tool_name)
         return self.get_tool(tool_class)
 
