@@ -349,6 +349,80 @@ class Tool(Component):
     def is_symbolic(self) -> bool:
         return issubclass(self.__class__, ToolMarkerSymbolicRead) or issubclass(self.__class__, ToolMarkerSymbolicEdit)
 
+    def _infer_project_from_tool_args(self, **kwargs: Any) -> Project | None:
+        """
+        Try to infer the active project from tool call arguments when no
+        project is bound to the session.
+
+        Scans kwargs for string values that look like filesystem paths and
+        checks them against all registered projects via longest-prefix
+        matching. If a match is found, the project is activated and returned.
+
+        :param kwargs: the tool call keyword arguments
+        :returns: an activated Project, or ``None`` if nothing could be inferred
+        """
+        # Collect path-like candidates from kwargs
+        path_candidates: list[str] = []
+        for key, value in kwargs.items():
+            if isinstance(value, str) and len(value) > 1:
+                # Look for absolute paths or paths with directory separators
+                stripped = value.strip()
+                if stripped.startswith("/") or stripped.startswith("~"):
+                    path_candidates.append(stripped)
+                elif "/" in stripped or "\\" in stripped:
+                    path_candidates.append(stripped)
+
+        if not path_candidates:
+            return None
+
+        # Resolve candidates to absolute paths
+        import os.path
+
+        resolved: list[str] = []
+        for candidate in path_candidates:
+            try:
+                abspath = os.path.abspath(os.path.expanduser(candidate))
+                if os.path.exists(abspath):
+                    resolved.append(abspath)
+            except (OSError, ValueError):
+                continue
+
+        if not resolved:
+            return None
+
+        # Check against all registered projects (both active and inactive).
+        # We use a two-tier match: exact path match first, then subpath match.
+        for abspath in resolved:
+            for registered in self.agent.serena_config.projects:
+                # Check if abspath IS the project root (samefile) or is INSIDE the project (prefix)
+                root_str = str(registered.project_root)
+                is_in_project = registered.matches_root_path(abspath) or (
+                    abspath.startswith(root_str) and len(abspath) > len(root_str)
+                    and abspath[len(root_str)] == "/"
+                )
+                if not is_in_project:
+                    continue
+
+                # Found a match — activate if not already active
+                canonical = registered.project_name
+                pm = self.agent.get_project_manager()
+                if not pm.is_active(canonical):
+                    try:
+                        project = registered.get_project_instance(self.agent.serena_config)
+                        project.set_agent(self.agent)
+                        pm.add(project)
+                        log.info(
+                            "Auto-activated project '%s' via tool-argument inference (path: %s)",
+                            canonical, abspath,
+                        )
+                    except Exception as exc:
+                        log.warning(
+                            "Could not activate inferred project '%s': %s", canonical, exc,
+                        )
+                        continue
+                return pm.get_by_name(canonical)
+        return None
+
     def apply_ex(self, log_call: bool = True, catch_exceptions: bool = True, mcp_ctx: Context | None = None, cwd: str | None = None, **kwargs) -> str:  # type: ignore
         """
         Applies the tool with logging and exception handling, using the given keyword arguments.
@@ -387,6 +461,15 @@ class Tool(Component):
         target_project: Project | None = None
         if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
             target_project = self.agent.resolve_session_project(session_id, cwd)
+
+        # Fallback: try to infer the project from tool arguments
+        if target_project is None and not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
+            inferred = self._infer_project_from_tool_args(**kwargs)
+            if inferred is not None:
+                target_project = inferred
+                # Persist the binding for this session
+                if session_id:
+                    self.agent.get_session_manager().set_project(session_id, inferred.project_name)
 
         # Enforce per-session tool visibility if configured
         if session_state and session_state.tool_allowlist is not None:

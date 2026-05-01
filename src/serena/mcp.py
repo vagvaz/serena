@@ -2,10 +2,12 @@
 The Serena Model Context Protocol (MCP) Server
 """
 
+import os
 import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator, Sequence
 from contextlib import asynccontextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import Any, Literal, cast
 
@@ -18,6 +20,7 @@ from pydantic_settings import SettingsConfigDict
 import logging
 
 from serena.agent import (
+    ProjectNotFoundError,
     SerenaAgent,
     SerenaConfig,
 )
@@ -30,6 +33,11 @@ from serena.util.exception import show_fatal_exception_safe
 from serena.util.logging import MemoryLogHandler
 
 log = logging.getLogger(__name__)
+
+# Context variable for passing the cwd from the SSE HTTP connection request
+# through to the server lifespan, where it can be used to auto-bind a session
+# to a project before any tool call.
+_connection_cwd: ContextVar[str | None] = ContextVar("_connection_cwd", default=None)
 
 
 def configure_logging(*args, **kwargs) -> None:  # type: ignore
@@ -173,6 +181,62 @@ class SerenaMCPFactory:
             title=tool_title,
         )
 
+    @staticmethod
+    def _cwd_middleware_dispatch(request: Any, call_next: Any) -> Any:
+        """
+        Starlette middleware dispatch that extracts ``cwd`` from the HTTP
+        request (query param ``?cwd=`` or header ``X-Cwd``) and stores it in
+        ``_connection_cwd`` for the :meth:`server_lifespan` to consume.
+
+        This runs once per HTTP request to the Starlette app (both SSE GET
+        and message POST), but only the SSE lifespan path reads the value.
+        """
+        cwd = (
+            request.query_params.get("cwd")
+            or request.headers.get("X-Cwd")
+            or request.headers.get("X-Project")
+        )
+        if cwd:
+            _connection_cwd.set(os.path.normpath(cwd))
+        return call_next(request)
+
+    def _patch_sse_app(self, mcp: FastMCP) -> None:
+        """
+        Monkey-patch ``FastMCP.run_sse_async`` on this instance so that the
+        Starlette SSE app includes :class:`CwdCaptureMiddleware`, which
+        captures the ``cwd`` query parameter or ``X-Cwd`` header from the
+        HTTP connection request and stores it in ``_connection_cwd``.
+
+        The lifespan reads ``_connection_cwd`` and auto-binds the session
+        to the resolved project before any tool call.
+        """
+        original_run_sse = mcp.run_sse_async
+
+        async def run_sse_with_cwd(
+            self_fastmcp: FastMCP, mount_path: str | None = None
+        ) -> None:
+            import uvicorn
+
+            starlette_app = self_fastmcp.sse_app(mount_path)
+
+            # Add CWD capture middleware (wraps all routes)
+            from starlette.middleware.base import BaseHTTPMiddleware
+
+            starlette_app.add_middleware(BaseHTTPMiddleware, dispatch=self._cwd_middleware_dispatch)  # type: ignore[arg-type]
+
+            config = uvicorn.Config(
+                starlette_app,
+                host=self_fastmcp.settings.host,
+                port=self_fastmcp.settings.port,
+                log_level=self_fastmcp.settings.log_level.lower(),
+            )
+            server = uvicorn.Server(config)
+            await server.serve()
+
+        import functools
+
+        mcp.run_sse_async = functools.partial(run_sse_with_cwd, mcp)
+
     def _iter_tools(self) -> Iterator[Tool]:
         assert self.agent is not None
         yield from self.agent.get_exposed_tool_instances()
@@ -278,7 +342,66 @@ class SerenaMCPFactory:
             port=port,
             instructions=instructions,
         )
+
+        # Patch the SSE transport to inject our cwd-capturing middleware
+        self._patch_sse_app(mcp)
+
         return mcp
+
+    def _auto_init_from_connection_cwd(self, session_id: str) -> str | None:
+        """
+        Try to auto-initialize the session from ``_connection_cwd`` (set by the
+        SSE middleware that captured the ``cwd`` query param or ``X-Cwd`` header).
+
+        :param session_id: the newly-created session ID to bind
+        :returns: the resolved project name, or ``None`` if nothing could be resolved
+        """
+        cwd = _connection_cwd.get()
+        if not cwd or not os.path.isdir(cwd):
+            return None
+
+        assert self.agent is not None
+        serena_config = self.agent.serena_config
+        session_manager = self.agent.get_session_manager()
+        project_manager = self.agent.get_project_manager()
+
+        # 1. Try to find a registered project matching this path
+        registered = serena_config.get_registered_project(cwd)
+        if registered is None and self.auto_register_projects:
+            # 2. Not registered but auto-register is on — register on the fly
+            try:
+                serena_config.add_project_from_path(cwd)
+                registered = serena_config.get_registered_project(cwd)
+            except (FileExistsError, FileNotFoundError) as exc:
+                log.info("Could not auto-register project from cwd '%s': %s", cwd, exc)
+                return None
+
+        if registered is None:
+            log.info("No registered project found for connection cwd '%s' — skipping auto-init", cwd)
+            return None
+
+        # 3. Activate the project if not already active
+        if not project_manager.is_active(registered.project_name):
+            try:
+                project = serena_config.get_project(cwd)
+                if project is not None:
+                    project.set_agent(self.agent)
+                    project_manager.add(project)
+                    log.info(
+                        "Auto-activated project '%s' from connection cwd: %s",
+                        registered.project_name, cwd,
+                    )
+            except Exception as exc:
+                log.warning("Failed to activate project '%s': %s", registered.project_name, exc)
+                return None
+
+        # 4. Bind the session to this project
+        session_manager.set_project(session_id, registered.project_name)
+        log.info(
+            "Auto-bound session %s to project '%s' from connection cwd: %s",
+            session_id, registered.project_name, cwd,
+        )
+        return registered.project_name
 
     @asynccontextmanager
     async def server_lifespan(self, mcp_server: FastMCP) -> AsyncIterator[None]:
@@ -300,6 +423,9 @@ class SerenaMCPFactory:
 
         # Extract session ID and client info from the MCP connection
         connection_ctx = SerenaConnectionContext()
+
+        # Try to auto-initialize from SSE-level cwd (set by middleware)
+        self._auto_init_from_connection_cwd(connection_ctx.session_id)
 
         openai_tool_compatible = self.context.name in ["chatgpt", "codex", "oaicompat-agent"]
         self._set_mcp_tools(mcp_server, openai_tool_compatible=openai_tool_compatible)

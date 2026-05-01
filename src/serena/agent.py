@@ -769,6 +769,10 @@ class SerenaAgent:
         """Return the session manager for multi-client daemon support."""
         return self._session_manager
 
+    def get_project_manager(self) -> ProjectManager:
+        """Return the project manager for active project lifecycle."""
+        return self._project_manager
+
     def get_session_state(self, session_id: str) -> SessionState | None:
         """Return the SessionState for the given session ID, if known."""
         return self._session_manager.get_session(session_id)
