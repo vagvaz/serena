@@ -34,8 +34,6 @@ from serena.config.context_mode import SerenaAgentContext, SerenaAgentMode
 from serena.config.serena_config import (
     LanguageBackend,
     ModeSelectionDefinition,
-    ModeSelectionDefinitionWithAddedModes,
-    ModeSelectionDefinitionWithBaseModes,
     RegisteredProject,
     SerenaConfig,
     SerenaPaths,
@@ -47,13 +45,13 @@ from serena.project_manager import ProjectManager
 from serena.prompt_factory import SerenaPromptFactory
 from serena.task_executor import TaskExecutor
 from serena.session_manager import SessionManager, SessionState
+from serena.mode_manager import ActiveModes, ModeManager
 from serena.tool_manager import ToolManager
 from serena.tools import (
     ReadMemoryTool,
     Tool,
 )
 from serena.util.gui import system_has_usable_display
-from serena.util.inspection import iter_subclasses
 from serena.util.logging import MemoryLogHandler
 from solidlsp.ls_config import Language
 
@@ -72,61 +70,6 @@ class ProjectNotFoundError(Exception):
 
 
 
-
-class ActiveModes:
-    _mode_instances: dict[str, SerenaAgentMode] = {}
-
-    def __init__(self) -> None:
-        self._configured_base_modes: Sequence[str] | None = None
-        self._configured_default_modes: Sequence[str] | None = None
-        self._added_modes: set[str] = set()
-        self._dynamically_activated_mode_names: set[str] = set()
-        """
-        the subset of active mode names that are dynamically activated (not necessarily enabled after project change)
-        """
-        self._active_mode_names: Sequence[str] = []
-        """
-        the full list of active mode names
-        """
-
-    def apply(self, mode_selection: ModeSelectionDefinition) -> None:
-        log.debug("Applying mode selection definition %s", mode_selection)
-
-        # apply overrides
-        if isinstance(mode_selection, ModeSelectionDefinitionWithBaseModes):
-            if mode_selection.base_modes is not None:
-                self._configured_base_modes = mode_selection.base_modes
-        if mode_selection.default_modes is not None:
-            self._configured_default_modes = mode_selection.default_modes
-        log.debug("Current mode selection: base_modes=%s, default_modes=%s", self._configured_base_modes, self._configured_default_modes)
-
-        # apply added modes (if any)
-        if isinstance(mode_selection, ModeSelectionDefinitionWithAddedModes):
-            if mode_selection.added_modes:
-                log.debug("Adding modes: %s", mode_selection.added_modes)
-                self._added_modes.update(mode_selection.added_modes)
-                log.debug("Current added modes: %s", self._added_modes)
-
-        self._dynamically_activated_mode_names = set(self._configured_default_modes or []) | self._added_modes
-        self._active_mode_names = sorted(set(self._configured_base_modes or []) | self._dynamically_activated_mode_names)
-
-    def get_mode_names(self) -> Sequence[str]:
-        return self._active_mode_names
-
-    @classmethod
-    def get_mode_instance(cls, mode_name: str) -> SerenaAgentMode:
-        if mode_name not in cls._mode_instances:
-            cls._mode_instances[mode_name] = SerenaAgentMode.load(mode_name)
-        return cls._mode_instances[mode_name]
-
-    def get_modes(self) -> Sequence[SerenaAgentMode]:
-        return [self.get_mode_instance(mode_name) for mode_name in self._active_mode_names]
-
-    def get_dynamically_activated_modes(self) -> Sequence[SerenaAgentMode]:
-        return [self.get_mode_instance(mode_name) for mode_name in self._dynamically_activated_mode_names]
-
-    def get_base_modes(self) -> Sequence[SerenaAgentMode]:
-        return [self.get_mode_instance(mode_name) for mode_name in self._configured_base_modes or []]
 
 
 class ProjectPromptProvisionStatus:
@@ -418,6 +361,9 @@ class SerenaAgent:
         self._memory_log_handler: MemoryLogHandler | None = None
         self._project_prompt_status = ProjectPromptProvisionStatus()
         self._session_mode_selection_definition = modes
+        self._mode_manager = ModeManager()
+        if self._session_mode_selection_definition is not None:
+            self._mode_manager.apply_session_definition(self._session_mode_selection_definition)
         self.version = serena_version()
 
         # obtain serena configuration using the decoupled factory function
@@ -515,8 +461,8 @@ class SerenaAgent:
         # Note: We cannot update the active tools yet, because the base toolset has not been computed yet
         #       (and its computation depends on the active project)
         startup_project_instance: Project | None = None
-        self._active_modes: ActiveModes
-        self._mode_overrides = modes
+        self._mode_manager.apply_config(self.serena_config)
+        self._mode_manager.apply_session_definition(self._session_mode_selection_definition)
         self._project_activation_callback = project_activation_callback
         self._project_prompt_status = ProjectPromptProvisionStatus()
         if project is not None:
@@ -532,11 +478,11 @@ class SerenaAgent:
 
         # determine the base toolset defining the set of exposed tools (which e.g. the MCP shall see),
         self._tool_manager.compute_base(
-            self.serena_config, self._language_backend, self._context, self._active_modes, startup_project_instance
+            self.serena_config, self._language_backend, self._context, self._mode_manager.active_modes, startup_project_instance
         )
 
         # update the active tools (considering the active project, if any)
-        self._tool_manager.compute_active(self._active_modes, self._project_manager)
+        self._tool_manager.compute_active(self._mode_manager.active_modes, self._project_manager)
 
         # Restore previously active projects from disk state
         # (set_agent is called inside the restore loop below)
@@ -932,7 +878,7 @@ class SerenaAgent:
         """
         :return: the list of active modes
         """
-        return list(self._active_modes.get_modes())
+        return list(self._mode_manager.active_modes.get_modes())
 
     def _format_prompt(self, prompt_template: str) -> str:
         template = JinjaTemplate(prompt_template)
@@ -1046,24 +992,22 @@ class SerenaAgent:
 
     def _update_active_modes(self, log_message: bool = True) -> None:
         """
-        Updates the active modes based on the Serena configuration, the active project configurations (if any),
-        and mode overrides (if any).
+        Update active modes by delegating to ModeManager.refresh().
+
+        Rebuilds the project config sources first (in case projects changed),
+        then refreshes the mode resolution pipeline.
         """
-        self._active_modes = ActiveModes()
-        self._active_modes.apply(self.serena_config)
+        self._mode_manager.clear_project_configs()
         for project in self._project_manager.get_all().values():
-            self._active_modes.apply(project.project_config)
-        if self._session_mode_selection_definition:
-            self._active_modes.apply(self._session_mode_selection_definition)
-        if self._mode_overrides:
-            self._active_modes.apply(self._mode_overrides)
+            self._mode_manager.apply_project_config(project.project_config)
+        self._mode_manager.refresh()
         if log_message:
-            active_mode_names = self._active_modes.get_mode_names()
+            active_mode_names = self._mode_manager.get_mode_names()
             log.info(f"Active modes ({len(active_mode_names)}): {', '.join(active_mode_names)}")
 
     def _update_active_tools(self) -> None:
         """Update active tools by delegating to ToolManager.compute_active()."""
-        self._tool_manager.compute_active(self._active_modes, self._project_manager)
+        self._tool_manager.compute_active(self._mode_manager.active_modes, self._project_manager)
 
     def issue_task(
         self,
@@ -1304,9 +1248,9 @@ class SerenaAgent:
 
     def _on_projects_changed(self) -> None:
         """Callback invoked by ProjectManager after any project is added or removed."""
-        mode_names_before = set(self._active_modes.get_mode_names()) if hasattr(self, '_active_modes') else set()
+        mode_names_before = set(self._mode_manager.get_mode_names()) if hasattr(self, '_mode_manager') else set()
         self._update_active_modes()
-        newly_activated = set(self._active_modes.get_mode_names()) - mode_names_before
+        newly_activated = set(self._mode_manager.get_mode_names()) - mode_names_before
         self._project_prompt_status = ProjectPromptProvisionStatus(newly_activated_mode_names=newly_activated)
         self._update_active_tools()
         # Notify dashboard manager of project change (for tray manager mode)
