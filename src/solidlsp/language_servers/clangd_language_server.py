@@ -411,9 +411,8 @@ class ClangdLanguageServer(SolidLanguageServer):
         assert completion_provider["resolveProvider"] is False
 
         self.server.notify.initialized({})
-        # set ready flag, clangd sends no meaningful notification when ready
-        # TODO This defeats the purpose of the event; we should wait for the server to actually be ready
-        self.server_ready.set()
 
-        # wait for server to be ready
+        # Wait for the server to actually be ready (signalled by
+        # the ``experimental/serverStatus`` notification handler in
+        # ``check_experimental_status`` when ``quiescent == True``).
         self.server_ready.wait()

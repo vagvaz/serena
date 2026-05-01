@@ -13,6 +13,7 @@ from mcp import Implementation
 from mcp.server.fastmcp import Context
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, func_metadata
 import logging
+from serena.util.exception import ErrorCode, format_tool_error
 from serena.util.string_utils import dict_string
 
 from serena.config.serena_config import LanguageBackend
@@ -477,19 +478,26 @@ class Tool(Component):
             if tool_name not in session_state.tool_allowlist:
                 allowed = ", ".join(sorted(session_state.tool_allowlist))
                 log.debug("Denied tool '%s' for session %s (allowlist=%s)", tool_name, session_id, allowed)
-                return (
-                    "Error: Tool '{tool}' is not permitted for this session. "
-                    "Allowed tools: {allowed}."
-                ).format(tool=tool_name, allowed=allowed)
+                return format_tool_error(
+                    ErrorCode.TOOL_PERMISSION_DENIED,
+                    f"Tool '{tool_name}' is not permitted for this session. "
+                    f"Allowed tools: {allowed}.",
+                )
 
         def task() -> str:
             apply_fn = self.get_apply_fn()
 
             try:
                 if not self.is_active():
-                    return f"Error: Tool '{self.get_name_from_cls()}' is not active. Active tools: {self.agent.get_active_tool_names()}"
+                    return format_tool_error(
+                        ErrorCode.TOOL_NOT_ACTIVE,
+                        f"Tool '{self.get_name_from_cls()}' is not active. Active tools: {self.agent.get_active_tool_names()}",
+                    )
             except Exception as e:
-                return f"RuntimeError while checking if tool {self.get_name_from_cls()} is active: {e}"
+                return format_tool_error(
+                    ErrorCode.INTERNAL_ERROR,
+                    f"RuntimeError while checking if tool {self.get_name_from_cls()} is active: {e}",
+                )
 
             if log_call:
                 self._log_tool_application(inspect.currentframe(), session_id or "global")
@@ -503,9 +511,10 @@ class Tool(Component):
                     # check whether the tool requires an active project
                     if not isinstance(self, ToolMarkerDoesNotRequireActiveProject):
                         if target_project is None:
-                            return (
-                                "Error: No active project. Ask the user to provide the project path or to select a project from this list of known projects: "
-                                + f"{self.agent.serena_config.project_names}"
+                            return format_tool_error(
+                                ErrorCode.NO_ACTIVE_PROJECT,
+                                "No active project. Ask the user to provide the project path or to select a project from this list of known projects: "
+                                + f"{self.agent.serena_config.project_names}",
                             )
 
                     # apply the actual tool
@@ -515,11 +524,27 @@ class Tool(Component):
                         if e.is_language_server_terminated():
                             affected_language = e.get_affected_language()
                             if affected_language is not None:
+                                ls_manager = self.agent.get_language_server_manager_or_raise()
+                                cb = ls_manager.get_circuit_breaker(affected_language)
+                                cb.record_failure()
+
+                                if cb.is_open():
+                                    log.error(
+                                        "Circuit breaker open for %s. Not retrying.",
+                                        affected_language,
+                                    )
+                                    return format_tool_error(
+                                        ErrorCode.LS_CIRCUIT_OPEN,
+                                        f"Language server for {affected_language} has crashed repeatedly. "
+                                        f"Not retrying automatically. Try restarting the project.",
+                                    )
+
                                 log.error(
                                     f"Language server terminated while executing tool ({e}). Restarting the language server and retrying ..."
                                 )
-                                self.agent.get_language_server_manager_or_raise().restart_language_server(affected_language)
+                                ls_manager.restart_language_server(affected_language)
                                 result = apply_fn(**kwargs)
+                                cb.record_success()
                             else:
                                 log.error(
                                     f"Language server terminated while executing tool ({e}), but affected language is unknown. Not retrying."
@@ -567,7 +592,7 @@ class Tool(Component):
             )
             return task_exec.result(timeout=self.agent.serena_config.tool_timeout)
         except Exception as e:  # typically TimeoutError (other exceptions caught in task)
-            msg = f"Error: {e.__class__.__name__} - {e}"
+            msg = format_tool_error(ErrorCode.TOOL_EXECUTION_FAILED, f"{e.__class__.__name__} - {e}")
             log.error(msg)
             return msg
 

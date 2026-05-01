@@ -3,6 +3,7 @@ import os.path
 import threading
 from collections.abc import Iterator
 
+from serena.util.circuit_breaker import CircuitBreaker
 from serena.util.logging import LogTime
 
 from serena.config.serena_config import SerenaPaths
@@ -28,6 +29,7 @@ class LanguageServerFactory:
         ls_timeout: float | None = None,
         ls_specific_settings: dict | None = None,
         trace_lsp_communication: bool = False,
+        cache_storage_mode: str = "monolithic",
     ):
         self.project_root = project_root
         self.project_data_path = project_data_path
@@ -36,6 +38,7 @@ class LanguageServerFactory:
         self.ls_timeout = ls_timeout
         self.ls_specific_settings = ls_specific_settings
         self.trace_lsp_communication = trace_lsp_communication
+        self.cache_storage_mode = cache_storage_mode
 
     def create_language_server(self, language: Language) -> SolidLanguageServer:
         ls_config = LanguageServerConfig(
@@ -54,6 +57,7 @@ class LanguageServerFactory:
                 solidlsp_dir=SerenaPaths().serena_user_home_dir,
                 project_data_path=self.project_data_path,
                 ls_specific_settings=self.ls_specific_settings or {},
+                cache_storage_mode=self.cache_storage_mode,  # type: ignore[arg-type]
             ),
         )
 
@@ -77,6 +81,7 @@ class LanguageServerManager:
         """
         self._language_servers = language_servers
         self._language_server_factory = language_server_factory
+        self._circuit_breakers: dict[Language, CircuitBreaker] = {}
 
     @property
     def _default_language_server(self) -> SolidLanguageServer:
@@ -186,6 +191,23 @@ class LanguageServerManager:
         if language not in self._language_servers:
             raise ValueError(f"No language server for language {language.value} present; cannot restart")
         return self._create_and_start_language_server(language)
+
+    def get_circuit_breaker(self, language: Language) -> CircuitBreaker:
+        """
+        Returns the circuit breaker for the given language, creating it lazily.
+
+        The circuit breaker prevents repeated restart-and-retry loops when a
+        language server crashes repeatedly within a short window.
+        """
+        if language not in self._circuit_breakers:
+            self._circuit_breakers[language] = CircuitBreaker(name=language.value)
+        return self._circuit_breakers[language]
+
+    def reset_circuit_breaker(self, language: Language) -> None:
+        """Manually reset the circuit breaker for the given language."""
+        cb = self._circuit_breakers.get(language)
+        if cb is not None:
+            cb.reset()
 
     def add_language_server(self, language: Language) -> SolidLanguageServer:
         """

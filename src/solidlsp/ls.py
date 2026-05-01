@@ -730,7 +730,26 @@ class SolidLanguageServer(ABC):
 
     def _start_server_process(self) -> None:
         self.server_started = True
+        self._server_ready_event: threading.Event = threading.Event()
         self._start_server()
+
+    def _signal_server_ready(self) -> None:
+        """Signal that the language server is fully initialized and ready for requests.
+
+        Subclasses should call this from their readiness notification handler
+        (e.g. ``experimental/serverStatus`` with ``quiescent=True``) instead of
+        setting a premature flag.  This replaces hardcoded ``time.sleep()`` calls
+        and premature ``Event.set()`` patterns.
+        """
+        self._server_ready_event.set()
+
+    def _wait_for_server_ready(self, timeout: float = 30.0) -> bool:
+        """Wait for the language server to signal readiness.
+
+        :param timeout: Maximum seconds to wait.
+        :returns: True if the server signalled readiness, False if timed out.
+        """
+        return self._server_ready_event.wait(timeout=timeout)
 
     @abstractmethod
     def _start_server(self) -> None:
@@ -1886,29 +1905,32 @@ class SolidLanguageServer(ABC):
                     ref_path, ref_line, ref_col, include_body=include_body, body_factory=body_factory
                 )
                 if containing_symbol is None:
-                    # TODO: HORRIBLE HACK! I don't know how to do it better for now...
-                    # THIS IS BOUND TO BREAK IN MANY CASES! IT IS ALSO SPECIFIC TO PYTHON!
-                    # Background:
-                    # When a variable is used to change something, like
-                    #
-                    # instance = MyClass()
-                    # instance.status = "new status"
-                    #
-                    # we can't find the containing symbol for the reference to `status`
-                    # since there is no container on the line of the reference
-                    # The hack is to try to find a variable symbol in the containing module
-                    # by using the text of the reference to find the variable name (In a very heuristic way)
-                    # and then look for a symbol with that name and kind Variable
-                    ref_text = file_data.contents.split("\n")[ref_line]
-                    if "." in ref_text:
-                        containing_symbol_name = ref_text.split(".")[0]
-                        document_symbols = self.request_document_symbols(ref_path)
-                        for symbol in document_symbols.iter_symbols():
-                            if symbol["name"] == containing_symbol_name and symbol["kind"] == ls_types.SymbolKind.Variable:
-                                containing_symbol = copy(symbol)
-                                containing_symbol["location"] = ref
-                                containing_symbol["range"] = ref["range"]
-                                break
+                    # Walk the symbol tree to find the innermost symbol that contains
+                    # the reference position.  This replaces a Python-specific heuristic
+                    # that parsed source text by splitting on '.' which broke for
+                    # any language without Python-style dot notation.
+                    document_symbols = self.request_document_symbols(ref_path)
+                    best_symbol = None
+                    best_size: int | None = None
+
+                    for symbol in document_symbols.iter_symbols():
+                        sym_range = symbol.get("range") or (symbol.get("location") or {}).get("range")
+                        if sym_range is None:
+                            continue
+                        # Check if the reference position is within this symbol's range
+                        start_line: int = sym_range["start"]["line"]
+                        end_line: int = sym_range["end"]["line"]
+                        if start_line <= ref_line <= end_line:
+                            # Pick the innermost (smallest line range) containing symbol
+                            size = end_line - start_line
+                            if best_size is None or size < best_size:
+                                best_size = size
+                                best_symbol = symbol
+
+                    if best_symbol is not None:
+                        containing_symbol = copy(best_symbol)
+                        containing_symbol["location"] = ref
+                        containing_symbol["range"] = ref["range"]
 
                 # We failed retrieving the symbol, falling back to creating a file symbol
                 if containing_symbol is None and include_file_symbols:

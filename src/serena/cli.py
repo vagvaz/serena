@@ -494,7 +494,7 @@ class TopLevelCommands(AutoRegisteringGroup):
             return
 
         click.echo(f"Serena daemon is running (PID {pid}).")
-        click.echo("  Endpoint: http://127.0.0.1:8765/mcp")
+        click.echo("  Endpoint: http://127.0.0.1:8765/sse")  # daemon always uses SSE transport
         click.echo("Stop it with: serena daemon-stop")
 
     @staticmethod
@@ -614,7 +614,7 @@ def _start_daemon(
         try:
             os.kill(existing_pid, 0)
             click.echo(f"Serena daemon is already running (PID {existing_pid}).")
-            click.echo(f"  Endpoint: http://127.0.0.1:{port}/mcp")
+            click.echo(f"  Endpoint: http://127.0.0.1:{port}/sse")  # daemon always uses SSE transport
             click.echo("Stop it with: serena daemon-stop")
             sys.exit(0)
         except OSError:
@@ -691,7 +691,7 @@ def _start_daemon(
             pass
         sys.exit(1)
 
-    click.echo(f"  Endpoint: http://127.0.0.1:{port}/mcp")
+    click.echo(f"  Endpoint: http://127.0.0.1:{port}/sse")  # daemon always uses SSE transport
     click.echo("Stop it with: serena daemon-stop")
     sys.exit(0)
 

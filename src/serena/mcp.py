@@ -89,17 +89,6 @@ class SerenaMCPFactory:
         self.auto_register_projects = auto_register_projects
 
     @staticmethod
-    def _sanitize_for_openai_tools(schema: dict) -> dict:
-        """
-        Delegates to OpenAIToolSchemaAdapter.sanitize().
-
-        Kept as a static method for backward compatibility during the
-        refactoring transition; callers should use
-        ``OpenAIToolSchemaAdapter.sanitize()`` directly.
-        """
-        return OpenAIToolSchemaAdapter.sanitize(schema)
-
-    @staticmethod
     def make_mcp_tool(tool: Tool, openai_tool_compatible: bool = True) -> MCPTool:
         """
         Create an MCP tool from a Serena Tool instance.
@@ -114,7 +103,7 @@ class SerenaMCPFactory:
         is_async = False
         parameters = func_arg_metadata.arg_model.model_json_schema()
         if openai_tool_compatible:
-            parameters = SerenaMCPFactory._sanitize_for_openai_tools(parameters)
+            parameters = OpenAIToolSchemaAdapter.sanitize(parameters)
 
         docstring = docstring_parser.parse(func_doc)
 
