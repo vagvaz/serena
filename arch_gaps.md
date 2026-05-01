@@ -124,40 +124,19 @@ class OpenAIToolSchemaAdapter:
 
 ---
 
-## Candidate 5 — Make the mode→tools cascade explicit
+## ✅ Candidate 5 — Make the mode→tools cascade explicit (DONE)
 
-**Files:** `agent.py` — `_update_active_modes()` + `_update_active_tools()`  
-**Scope:** Implicit dependency between mode changes and tool recomputation
+**Commit:** _(pending)_  
+**Result:** agent.py now has `_refresh_active_state()` that atomically recomputes modes and tools. Two formerly-paired call sites consolidated. The separate `_update_active_modes()` still exists only for the one case in ``__init__`` where tools aren't ready yet.
 
-### Problem
+---
 
-The mode→tools cascade is implicit and spread across:
-- `_update_active_modes()` — called from `_on_projects_changed`, `_on_project_activated`
-- `_update_active_tools()` — must be called separately after every mode change
+## Summary
 
-If someone adds a new code path that changes modes but forgets to call `_update_active_tools`, tools become stale — a runtime bug with no compile-time protection.
-
-### Solution
-
-Merge into a single transaction:
-
-```python
-def _refresh_active_state(self) -> None:
-    """Atomically recompute modes and tools."""
-    self._mode_manager.refresh()
-    self._tool_manager.compute_active(self._mode_manager.active_modes)
-```
-
-Or use a reactive pattern:
-
-```python
-self._mode_manager.on_modes_changed.connect(
-    lambda: self._tool_manager.compute_active(self._mode_manager.active_modes)
-)
-```
-
-### Benefits
-
-- **Locality** — the mode→tool dependency is explicit
-- **Leverage** — callers only call `_refresh_active_state()` once
-- **Testability** — dependency graph is explicit and mockable
+| # | Candidate | Module Created | Impact |
+|---|-----------|----------------|--------|
+| 1 | ToolManager | `tool_manager.py` | agent -264 lines |
+| 2 | ModeManager | `mode_manager.py` | agent -70 lines |
+| 3 | ProjectFileSystem | `file_system.py` | project -140 lines |
+| 4 | OpenAIToolSchemaAdapter | `tool_schema.py` | mcp -105 lines |
+| 5 | Mode→tools cascade | — | Consolidated paired calls into `_refresh_active_state()` |

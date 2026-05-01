@@ -502,8 +502,7 @@ class SerenaAgent:
                 log.warning("Failed to restore project '%s' from disk: %s", registered.project_name, e)
 
         # Ensure restored projects influence initial state
-        self._update_active_modes()
-        self._update_active_tools()
+        self._refresh_active_state()
 
         # Start the idle project checker
         self._project_manager.start_idle_checker()
@@ -990,6 +989,17 @@ class SerenaAgent:
 
         return msg
 
+    def _refresh_active_state(self) -> None:
+        """Atomically recompute modes and tools.
+
+        This is the only path that both changes modes and recomputes tools.
+        Callers must NOT call ``_update_active_modes()`` and
+        ``_update_active_tools()`` separately — use this method instead
+        to guarantee the tool set stays consistent with the current modes.
+        """
+        self._update_active_modes()
+        self._update_active_tools()
+
     def _update_active_modes(self, log_message: bool = True) -> None:
         """
         Update active modes by delegating to ModeManager.refresh().
@@ -1249,10 +1259,9 @@ class SerenaAgent:
     def _on_projects_changed(self) -> None:
         """Callback invoked by ProjectManager after any project is added or removed."""
         mode_names_before = set(self._mode_manager.get_mode_names()) if hasattr(self, '_mode_manager') else set()
-        self._update_active_modes()
+        self._refresh_active_state()
         newly_activated = set(self._mode_manager.get_mode_names()) - mode_names_before
         self._project_prompt_status = ProjectPromptProvisionStatus(newly_activated_mode_names=newly_activated)
-        self._update_active_tools()
         # Notify dashboard manager of project change (for tray manager mode)
         dm = getattr(self, '_dashboard_manager', None)
         if dm is not None:
