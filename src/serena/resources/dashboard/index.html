@@ -1,97 +1,318 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Serena Dashboard</title>
-<link rel="icon" type="image/png" sizes="32x32" href="serena-icon-32.png">
-<link rel="stylesheet" href="dashboard.css">
-<script src="jquery.min.js"></script>
-<script src="dashboard.js"></script>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Serena Dashboard - Synthwave REPL</title>
+  <link rel="icon" type="image/png" sizes="32x32" href="serena-icon-32.png">
+  <link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&family=Audiowide&family=Chakra+Petch:wght@400;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="dashboard.css">
+  <script src="jquery.min.js"></script>
+  <script src="dashboard.js"></script>
 </head>
 <body>
-<div id="app">
-  <header id="topbar">
-    <div class="topbar-left">
-      <img id="logo" class="theme-aware" src="serena-logo.svg"
-           data-light="serena-logo.svg" data-dark="serena-logo-dark-mode.svg" alt="Serena">
-      <span id="version-badge"></span>
-    </div>
-    <div class="topbar-center">
-      <nav id="tabs">
-        <button class="tab active" data-page="overview">Overview</button>
-        <button class="tab" data-page="projects">Projects</button>
-        <button class="tab" data-page="sessions">Sessions</button>
-        <button class="tab" data-page="logs">Logs</button>
-        <button class="tab" data-page="tools">Tools</button>
-        <button class="tab" data-page="config">Config</button>
-      </nav>
-    </div>
-    <div class="topbar-right">
-      <span id="client-badge" class="badge"></span>
-      <button id="theme-btn" title="Toggle theme">🌙</button>
-    </div>
-  </header>
+  <!-- Background Effects -->
+  <div class="terminal-bg"></div>
+  <div class="grid-overlay"></div>
+  <div class="scanline"></div>
+  <div class="glow-orb pink"></div>
+  <div class="glow-orb cyan"></div>
 
-  <main id="content">
-    <!-- Overview -->
-    <section id="page-overview" class="page active">
-      <div class="stat-row">
-        <div class="stat-card" id="stat-projects"><label>Projects</label><span class="stat-val">—</span></div>
-        <div class="stat-card" id="stat-sessions"><label>Sessions</label><span class="stat-val">—</span></div>
-        <div class="stat-card" id="stat-tools-active"><label>Tools Active</label><span class="stat-val">—</span></div>
-        <div class="stat-card" id="stat-tool-calls"><label>Tool Calls</label><span class="stat-val">—</span></div>
-        <div class="stat-card" id="stat-memories"><label>Memories</label><span class="stat-val">—</span></div>
-      </div>
-      <div id="overview-projects"></div>
-    </section>
+  <!-- Terminal Container -->
+  <div class="terminal">
 
-    <!-- Projects -->
-    <section id="page-projects" class="page">
-      <div class="page-header"><h2>Active Projects</h2></div>
-      <div id="projects-grid" class="card-grid"></div>
-      <div class="page-header" style="margin-top:2rem"><h2>Registered Projects</h2></div>
-      <div id="registered-projects"></div>
-    </section>
-
-    <!-- Sessions -->
-    <section id="page-sessions" class="page">
-      <div class="page-header"><h2>Sessions</h2></div>
-      <div id="sessions-list"></div>
-    </section>
-
-    <!-- Logs -->
-    <section id="page-logs" class="page">
-      <div class="page-header">
-        <h2>Logs</h2>
-        <div class="page-actions">
-          <select id="log-level-filter">
-            <option value="">All Levels</option>
-            <option value="INFO">INFO</option>
-            <option value="WARNING">WARNING</option>
-            <option value="ERROR">ERROR</option>
-            <option value="DEBUG">DEBUG</option>
-          </select>
-          <input id="log-search" type="text" placeholder="Search logs…">
-          <button id="clear-logs-btn" class="btn-sm">Clear</button>
-          <button id="scroll-lock-btn" class="btn-sm active" title="Auto-scroll">↓</button>
+    <!-- Status Line -->
+    <div class="status-line">
+      <div class="status-left">
+        <img id="logo" class="theme-aware" src="serena-logo.svg"
+             data-light="serena-logo.svg" data-dark="serena-logo-dark-mode.svg" alt="Serena">
+        <div class="status-brand">SERENA</div>
+        <div class="status-item">
+          <span class="status-label">CORE:</span>
+          <span class="status-value" id="core-status">ONLINE</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">PROJECTS:</span>
+          <span class="status-value" id="status-projects">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">SESSIONS:</span>
+          <span class="status-value" id="status-sessions">—</span>
+        </div>
+        <div class="status-item">
+          <span class="status-label">MEMORIES:</span>
+          <span class="status-value" id="status-memories">—</span>
         </div>
       </div>
-      <div id="log-container"><div class="log-placeholder">Waiting for logs…</div></div>
-    </section>
+      <div class="status-right">
+        <span class="badge" id="client-badge"></span>
+        <span class="version" id="version-badge">—</span>
+        <span id="theme-btn" class="theme-toggle" title="Toggle theme">🌙</span>
+      </div>
+    </div>
 
-    <!-- Tools -->
-    <section id="page-tools" class="page">
-      <div class="page-header"><h2>Tool Usage</h2></div>
-      <div id="tools-stats"></div>
-    </section>
+    <!-- Main Panes -->
+    <div class="panes-container">
+      <div class="main-pane">
+        <!-- Tab Bar -->
+        <div class="tab-bar">
+          <div class="tab active" data-page="overview">overview</div>
+          <div class="tab" data-page="projects">projects</div>
+          <div class="tab" data-page="sessions">sessions</div>
+          <div class="tab" data-page="logs">logs</div>
+          <div class="tab" data-page="tools">tools</div>
+          <div class="tab" data-page="config">config</div>
+        </div>
 
-    <!-- Config -->
-    <section id="page-config" class="page">
-      <div class="page-header"><h2>Configuration</h2></div>
-      <div id="config-detail"></div>
-    </section>
-  </main>
-</div>
+        <!-- Pane Content -->
+        <div class="pane-content">
+
+          <!-- ═══ Overview ═══ -->
+          <div class="page active" id="page-overview">
+            <div class="gauges-grid">
+              <div class="gauge-box">
+                <div class="gauge-header">Tool Calls</div>
+                <div class="gauge-content">
+                  <div class="gauge-value cyan" id="gauge-tool-calls">—</div>
+                  <div class="cell-muted gauge-sub">total all time</div>
+                </div>
+              </div>
+              <div class="gauge-box">
+                <div class="gauge-header">Active Sessions</div>
+                <div class="gauge-content">
+                  <div class="gauge-value green" id="gauge-sessions">—</div>
+                  <div class="gauge-bar" id="sessions-bar"></div>
+                </div>
+              </div>
+              <div class="gauge-box">
+                <div class="gauge-header">Projects</div>
+                <div class="gauge-content">
+                  <div class="gauge-value amber" id="gauge-projects">—</div>
+                  <div class="cell-muted gauge-sub" id="gauge-projects-sub"></div>
+                </div>
+              </div>
+              <div class="gauge-box">
+                <div class="gauge-header">Memories</div>
+                <div class="gauge-content">
+                  <div class="gauge-value pink" id="gauge-memories">—</div>
+                  <div class="gauge-bar" id="memories-bar"></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="pane-header">
+              <span class="pane-title">Recent Sessions</span>
+              <span class="pane-meta" id="recent-sessions-count">—</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>Project</th>
+                  <th>Status</th>
+                  <th>Idle</th>
+                  <th>Client</th>
+                </tr>
+              </thead>
+              <tbody id="recent-sessions-body">
+                <tr><td colspan="5" class="cell-muted" style="text-align:center;padding:2rem;">Waiting for data…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- ═══ Projects ═══ -->
+          <div class="page" id="page-projects">
+            <div class="pane-header">
+              <span class="pane-title">Active Projects</span>
+              <span class="pane-meta" id="projects-count">—</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Name</th>
+                  <th>Path</th>
+                  <th>Languages</th>
+                  <th>LSP</th>
+                  <th>Sessions</th>
+                  <th>Idle</th>
+                </tr>
+              </thead>
+              <tbody id="projects-body">
+                <tr><td colspan="6" class="cell-muted" style="text-align:center;padding:2rem;">Waiting for data…</td></tr>
+              </tbody>
+            </table>
+
+            <div style="margin-top: 24px;">
+              <div class="pane-header">
+                <span class="pane-title">Registered Projects</span>
+                <span class="pane-meta" id="registered-projects-count">—</span>
+              </div>
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>Name</th>
+                    <th>Path</th>
+                    <th>Status</th>
+                    <th>Sessions</th>
+                  </tr>
+                </thead>
+                <tbody id="registered-projects-body">
+                  <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:2rem;">Waiting for data…</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <!-- ═══ Sessions ═══ -->
+          <div class="page" id="page-sessions">
+            <div class="pane-header">
+              <span class="pane-title">Active Sessions</span>
+              <span class="pane-meta" id="sessions-count">—</span>
+            </div>
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Session ID</th>
+                  <th>Project</th>
+                  <th>Client</th>
+                  <th>Idle</th>
+                </tr>
+              </thead>
+              <tbody id="sessions-body">
+                <tr><td colspan="4" class="cell-muted" style="text-align:center;padding:2rem;">Waiting for data…</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- ═══ Logs ═══ -->
+          <div class="page" id="page-logs">
+            <div class="pane-header">
+              <span class="pane-title">System Logs</span>
+              <span class="pane-meta" id="logs-count">0 entries</span>
+              <div class="pane-actions">
+                <select id="log-level-filter" class="pane-btn">
+                  <option value="">All Levels</option>
+                  <option value="INFO">INFO</option>
+                  <option value="WARNING">WARNING</option>
+                  <option value="ERROR">ERROR</option>
+                  <option value="DEBUG">DEBUG</option>
+                </select>
+                <input id="log-search" class="pane-btn log-search-input" type="text" placeholder="Search…">
+                <button id="clear-logs-btn" class="pane-btn">[clear]</button>
+                <button id="scroll-lock-btn" class="pane-btn active" title="Auto-scroll">[live]</button>
+              </div>
+            </div>
+            <div class="log-stream" id="main-log-stream">
+              <div class="log-placeholder">Logs will appear here…</div>
+            </div>
+          </div>
+
+          <!-- ═══ Tools ═══ -->
+          <div class="page" id="page-tools">
+            <div class="pane-header">
+              <span class="pane-title">Tool Usage</span>
+              <span class="pane-meta" id="tools-count">—</span>
+            </div>
+            <div id="tools-list"></div>
+          </div>
+
+          <!-- ═══ Config ═══ -->
+          <div class="page" id="page-config">
+            <div class="config-section">
+              <div class="config-header">Server</div>
+              <div class="config-row">
+                <span class="config-key">Version</span>
+                <span class="config-value" id="cfg-version">—</span>
+              </div>
+              <div class="config-row">
+                <span class="config-key">Client</span>
+                <span class="config-value" id="cfg-client">—</span>
+              </div>
+              <div class="config-row">
+                <span class="config-key">Context</span>
+                <span class="config-value" id="cfg-context">—</span>
+              </div>
+              <div class="config-row">
+                <span class="config-key">Languages</span>
+                <span class="config-value" id="cfg-languages">—</span>
+              </div>
+              <div class="config-row">
+                <span class="config-key">Encoding</span>
+                <span class="config-value" id="cfg-encoding">—</span>
+              </div>
+              <div class="config-row">
+                <span class="config-key">JetBrains Mode</span>
+                <span class="config-value" id="cfg-jetbrains">—</span>
+              </div>
+            </div>
+            <div class="config-section">
+              <div class="config-header">Active Tools</div>
+              <div class="config-tags" id="cfg-active-tools"></div>
+            </div>
+            <div class="config-section">
+              <div class="config-header">Available Tools</div>
+              <div class="config-tags" id="cfg-tools"></div>
+            </div>
+            <div class="config-section">
+              <div class="config-header">Available Modes</div>
+              <div class="config-tags" id="cfg-modes"></div>
+            </div>
+            <div class="config-section">
+              <div class="config-header">Available Contexts</div>
+              <div class="config-tags" id="cfg-contexts"></div>
+            </div>
+            <div class="config-section">
+              <div class="config-header">Modes</div>
+              <div class="config-tags" id="cfg-active-modes"></div>
+            </div>
+          </div>
+
+        </div><!-- /pane-content -->
+      </div><!-- /main-pane -->
+
+      <!-- Right Pane — Live Logs -->
+      <div class="right-pane">
+        <div class="pane-header">
+          <span class="pane-title">Live Logs</span>
+          <div class="pane-actions">
+            <button id="right-pane-clear" class="pane-btn">[clear]</button>
+          </div>
+        </div>
+        <div class="log-stream" id="right-log-stream">
+          <div class="log-placeholder">Waiting for logs…</div>
+        </div>
+      </div>
+    </div><!-- /panes-container -->
+
+    <!-- Command Bar -->
+    <div class="command-bar">
+      <div class="key-hint active" data-page="overview">
+        <span class="key">F1</span>
+        <span class="key-label">Overview</span>
+      </div>
+      <div class="key-hint" data-page="projects">
+        <span class="key">F2</span>
+        <span class="key-label">Projects</span>
+      </div>
+      <div class="key-hint" data-page="sessions">
+        <span class="key">F3</span>
+        <span class="key-label">Sessions</span>
+      </div>
+      <div class="key-hint" data-page="logs">
+        <span class="key">F4</span>
+        <span class="key-label">Logs</span>
+      </div>
+      <div class="key-hint" data-page="tools">
+        <span class="key">F5</span>
+        <span class="key-label">Tools</span>
+      </div>
+      <div class="key-hint" data-page="config">
+        <span class="key">F6</span>
+        <span class="key-label">Config</span>
+      </div>
+      <span class="command-prompt">serena&gt;</span>
+    </div>
+
+  </div><!-- /terminal -->
 </body>
 </html>

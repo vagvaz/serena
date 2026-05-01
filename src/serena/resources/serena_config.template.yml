@@ -83,6 +83,15 @@ trace_lsp_communication: False
 # No documentation on options means no options are available.
 ls_specific_settings: {}
 
+# controls how symbol cache entries are stored on disk.
+# Possible values:
+#   monolithic (default): all entries for a language are stored in a single pickle file.
+#   per_file: each cache entry is a separate file, enabling lazy loading
+#     and better branch-switching persistence.
+# On first switch to "per_file", existing monolithic caches are automatically migrated.
+# Can be overridden in project.yml.
+cache_storage_mode: monolithic
+
 # list of paths to ignore across all projects.
 # Same syntax as gitignore, so you can use * and **.
 # These patterns are merged additively with each project's own ignored_paths.
@@ -108,7 +117,23 @@ tool_timeout: 240
 # list of tools to be globally excluded
 excluded_tools: []
 
-# list of optional tools (which are disabled by default) to be included
+# list of optional tools (which are disabled by default) to be included.
+# Available optional tool names include:
+#   find_implementations        - Find implementations/overrides of a symbol (beta, LSP only)
+#   find_declaration            - Find declaration by regex pattern match (beta, LSP only)
+#   jetbrains_find_symbol       - Symbol search via JetBrains backend
+#   jetbrains_find_declaration  - Declaration lookup via JetBrains backend
+#   jetbrains_find_implementations - Implementation lookup via JetBrains backend
+#   jetbrains_move              - Move symbol/file/dir with reference updating (beta)
+#   jetbrains_safe_delete       - Safe deletion with propagation (beta)
+#   jetbrains_inline            - Inline symbol (beta)
+#   jetbrains_type_hierarchy    - Supertype/subtype hierarchy (beta)
+#   jetbrains_debug             - Interactive debug REPL (beta)
+#   open_dashboard              - Open the Serena Dashboard
+#   list_queryable_projects     - List queryable Serena projects
+#   query_project               - Query files/symbols from another project
+#   deactivate_project          - Deactivate the currently active project
+#   restart_language_server     - Restart LSP server(s)
 included_optional_tools: []
 
 # fixed set of tools to use as the base tool set (if non-empty), replacing Serena's default set of tools.

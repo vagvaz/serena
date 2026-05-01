@@ -253,6 +253,12 @@ class SharedConfig(ToolInclusionDefinition, ToStringMixin):
     ignored_memory_patterns: list[str] = field(default_factory=list)
     ls_specific_settings: dict = field(default_factory=dict)
     """Advanced configuration option allowing to configure language server implementation specific options, see SolidLSPSettings for more info."""
+    cache_storage_mode: str | None = None
+    """Controls how symbol cache entries are stored on disk.
+    - ``"monolithic"`` (default): All entries for a language are stored in a single pickle file.
+    - ``"per_file"``: Each cache entry is stored as an individual file, enabling lazy loading
+      and better branch-switching persistence.
+    If not set, defaults to ``"monolithic"`` in SolidLSPSettings."""
 
 
 class SerenaConfigError(Exception):

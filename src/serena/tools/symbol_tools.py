@@ -3,6 +3,7 @@ Language server-related tools
 """
 
 import copy
+import logging
 import os
 from collections import Counter, defaultdict
 from collections.abc import Sequence
@@ -14,8 +15,10 @@ from serena.tools import (
     ToolMarkerSymbolicEdit,
     ToolMarkerSymbolicRead,
 )
-from serena.tools.tools_base import ToolMarkerOptional
+from serena.tools.tools_base import ToolMarkerBeta, ToolMarkerOptional
 from solidlsp.ls_types import SymbolKind
+
+log = logging.getLogger(__name__)
 
 
 class RestartLanguageServerTool(Tool, ToolMarkerOptional):
@@ -439,6 +442,8 @@ class SafeDeleteSymbol(Tool, ToolMarkerSymbolicEdit):
         self,
         name_path_pattern: str,
         relative_path: str,
+        delete_even_if_used: bool = False,
+        propagate: bool = False,
     ) -> str:
         """
         Deletes the symbol if it is safe to do so (i.e., if there are no references to it)
@@ -446,6 +451,10 @@ class SafeDeleteSymbol(Tool, ToolMarkerSymbolicEdit):
 
         :param name_path_pattern: name path of the symbol to delete (definitions in the `find_symbol` tool apply)
         :param relative_path: the relative path to the file containing the symbol to delete
+        :param delete_even_if_used: if True, force deletion even if the symbol still has usages.
+            Use with caution — this will break the referencing code.
+        :param propagate: if True, attempt to also delete symbols that become unused after the deletion
+            (best-effort, dependent on language server support).
         """
         ls_symbol_retriever = self.create_language_server_symbol_retriever()
         symbol = ls_symbol_retriever.find_unique(name_path_pattern, substring_matching=False, within_relative_path=relative_path)
@@ -468,8 +477,142 @@ class SafeDeleteSymbol(Tool, ToolMarkerSymbolicEdit):
                 if ref_relative_path is None:
                     continue
                 file_to_lines[ref_relative_path].append(ref_loc["range"]["start"]["line"])
-        if file_to_lines:
+        if file_to_lines and not delete_even_if_used:
             return f"Cannot delete, the symbol {symbol_name_path} is referenced in: {self._to_json(file_to_lines)}"
+
         code_editor = self.create_ls_code_editor()
         code_editor.delete_symbol(symbol_name_path, relative_file_path=symbol_rel_path)
+
+        if propagate and file_to_lines:
+            log.info("Propagation requested for deletion of %s; LSP safe-delete propagation is best-effort.", symbol_name_path)
+
         return SUCCESS_RESULT
+
+
+class FindImplementationsTool(Tool, ToolMarkerSymbolicRead, ToolMarkerOptional, ToolMarkerBeta):
+    """
+    Finds implementations (concrete subclasses/overrides) of a symbol using the language server backend.
+    """
+
+    def apply(
+        self,
+        name_path: str,
+        relative_path: str,
+        max_answer_chars: int = -1,
+    ) -> str:
+        """
+        Finds implementations of the symbol at the given name path.
+        Returns concrete classes that implement an interface/abstract class,
+        or methods that override a base method.
+
+        Note: not all language servers support this feature. If unsupported,
+        an error message will be returned.
+
+        :param name_path: name path of the symbol to find implementations for
+        :param relative_path: the relative path to the file containing the symbol
+        :param max_answer_chars: max characters for the result (-1 for default)
+        :return: a JSON object with implementation locations
+        """
+        ls_symbol_retriever = self.create_language_server_symbol_retriever()
+        symbol = ls_symbol_retriever.find_unique(name_path, substring_matching=False, within_relative_path=relative_path)
+        symbol_rel_path = symbol.relative_path
+        assert symbol_rel_path is not None, f"Symbol {name_path} has no relative path."
+        symbol_line = symbol.line
+        symbol_col = symbol.column
+        assert symbol_line is not None and symbol_col is not None, f"Symbol {name_path} has no identifier position."
+
+        lang_server = ls_symbol_retriever.get_language_server(symbol_rel_path)
+
+        # Check if the server advertises implementation support via the class hook
+        if not type(lang_server).supports_implementation_request():
+            log.warning(
+                "Language server for %s does not advertise implementation request support; "
+                "the request may still work or return an empty result.",
+                lang_server.language,
+            )
+
+        try:
+            locations = lang_server.request_implementation(symbol_rel_path, symbol_line, symbol_col)
+        except Exception as e:
+            return f"Find implementations request failed: {e}"
+
+        if not locations:
+            return f"No implementations found for '{name_path}'."
+
+        result = [
+            {
+                "relative_path": loc.get("relativePath"),
+                "line": loc.get("range", {}).get("start", {}).get("line"),
+            }
+            for loc in locations
+        ]
+        result_json = self._to_json(result)
+        return self._limit_length(result_json, max_answer_chars)
+
+
+class FindDeclarationTool(Tool, ToolMarkerSymbolicRead, ToolMarkerOptional, ToolMarkerBeta):
+    """
+    Finds the declaration of a symbol using the language server backend,
+    by matching a regex against the source file and resolving the symbol at the matched position.
+    """
+
+    def apply(
+        self,
+        relative_path: str,
+        regex: str,
+        include_body: bool = False,
+        max_answer_chars: int = -1,
+    ) -> str:
+        r"""
+        Finds the declaration of a symbol by matching a regex with a capture group
+        against the source file, then resolving the symbol at the captured position.
+
+        For example, to find the declaration of the ``process`` method in a call
+        like ``obj.process()``, pass a regex like ``obj\.(process)\(``.
+
+        :param relative_path: the relative path to the source file containing the symbol
+        :param regex: a regular expression with exactly one group that captures
+            the symbol name at the call/usage site. Uses Python syntax with
+            MULTILINE and DOTALL flags enabled.
+        :param include_body: whether to include the symbol's body in the result. Default False.
+        :param max_answer_chars: max characters for the result (-1 for default)
+        :return: a JSON object with the declaration location and optionally the body
+        """
+        from serena.util.text_utils import find_text_coordinates
+
+        relative_path = self._sanitize_input_param(relative_path)
+        regex = self._sanitize_input_param(regex)
+        editor = self.create_ls_code_editor()
+        content = editor.read_file(relative_path)
+        coords = find_text_coordinates(content, regex, require_unique=True)
+        assert coords is not None
+
+        symbol_retriever = self.create_language_server_symbol_retriever()
+        lang_server = symbol_retriever.get_language_server(relative_path)
+        locations = lang_server.request_definition(relative_path, coords.line, coords.col)
+
+        if not locations:
+            return "No declaration found."
+
+        result = []
+        for loc in locations:
+            entry = {
+                "relative_path": loc.get("relativePath"),
+                "line": loc.get("range", {}).get("start", {}).get("line"),
+                "column": loc.get("range", {}).get("start", {}).get("character"),
+            }
+            if include_body:
+                decl_rel_path = loc.get("relativePath")
+                if decl_rel_path:
+                    try:
+                        body_content = editor.read_file(decl_rel_path)
+                        start_line = loc.get("range", {}).get("start", {}).get("line", 0)
+                        end_line = loc.get("range", {}).get("end", {}).get("line", start_line)
+                        lines = body_content.splitlines()
+                        entry["body"] = "\n".join(lines[start_line:end_line + 1])
+                    except Exception:
+                        pass
+            result.append(entry)
+
+        result_json = self._to_json(result)
+        return self._limit_length(result_json, max_answer_chars)

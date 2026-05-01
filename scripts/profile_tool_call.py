@@ -1,10 +1,9 @@
 import cProfile
+import logging
 from pathlib import Path
 from typing import Literal
 
-from sensai.util import logging
-from sensai.util.logging import LogTime
-from sensai.util.profiling import profiled
+from serena.util.logging import LogTime
 
 from serena.agent import SerenaAgent
 from serena.config.serena_config import SerenaConfig
@@ -14,7 +13,7 @@ log = logging.getLogger(__name__)
 
 
 if __name__ == "__main__":
-    logging.configure()
+    logging.basicConfig(level=logging.INFO)
 
     # The profiler to use:
     # Use pyinstrument for hierarchical profiling output
@@ -41,12 +40,12 @@ if __name__ == "__main__":
         log.info("Tool result:\n%s", result)
 
     if profiler == "pyinstrument":
-
-        @profiled(log_to_file=True)
-        def profiled_tool_call():
-            tool_call()
-
-        profiled_tool_call()
+        import pyinstrument
+        profiler_obj = pyinstrument.Profiler()
+        profiler_obj.start()
+        tool_call()
+        profiler_obj.stop()
+        print(profiler_obj.output_text(unicode=True, color=True))
 
     elif profiler == "cprofile":
         cProfile.run("tool_call()", "tool_call.pstat")
