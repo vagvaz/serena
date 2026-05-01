@@ -5,7 +5,7 @@ from typing import TYPE_CHECKING
 import requests as requests_lib
 from flask import Flask, request
 from pydantic import BaseModel
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from serena.config.serena_config import LanguageBackend, SerenaConfig
 from serena.constants import SerenaPorts

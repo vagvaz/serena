@@ -18,8 +18,8 @@ import psutil
 from flask import Flask, Response, redirect, request, send_from_directory
 from PIL import Image
 from pydantic import BaseModel
-from sensai.util import logging
-from sensai.util.pickle import dump_pickle, load_pickle
+import logging
+from serena.util.pickle_utils import dump_pickle, load_pickle
 
 from serena.analytics import ToolUsageStats
 from serena.config.serena_config import SerenaConfig, SerenaPaths

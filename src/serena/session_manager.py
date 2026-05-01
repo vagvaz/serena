@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Sequence
 
-from sensai.util import logging
+import logging
 
 log = logging.getLogger(__name__)
 

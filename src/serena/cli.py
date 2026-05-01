@@ -13,9 +13,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 import click
-from sensai.util import logging
-from sensai.util.logging import FileLoggerContext, datetime_tag
-from sensai.util.string import dict_string
+import logging
+from serena.util.logging import FileLoggerContext, datetime_tag
+from serena.util.string_utils import dict_string
 from tqdm import tqdm
 
 from serena import serena_version
@@ -729,7 +729,7 @@ def _start_daemon(
         postfix = "You begin by acknowledging that you understood the above instructions and are ready to receive tasks."
 
         lvl = logging.getLevelNamesMapping()[log_level.upper()]
-        logging.configure(level=lvl)
+        logging.basicConfig(level=lvl, format=SERENA_LOG_FORMAT)
         context_instance = SerenaAgentContext.load(context)
         modes_selection_def: ModeSelectionDefinition | None = None
         if modes:
@@ -1109,7 +1109,7 @@ class ProjectCommands(AutoRegisteringGroup):
     @staticmethod
     def _index_project(registered_project: RegisteredProject, log_level: str, timeout: float, resume: bool = False) -> None:
         lvl = logging.getLevelNamesMapping()[log_level.upper()]
-        logging.configure(level=lvl)
+        logging.basicConfig(level=lvl, format=SERENA_LOG_FORMAT)
         serena_config = SerenaConfig.from_config_file()
         proj = registered_project.get_project_instance(serena_config=serena_config)
         click.echo(f"Indexing symbols in {proj} …")
@@ -1242,7 +1242,7 @@ class ProjectCommands(AutoRegisteringGroup):
         from serena.project import Project
         from serena.tools import FindReferencingSymbolsTool, FindSymbolTool, GetSymbolsOverviewTool, SearchForPatternTool
 
-        logging.configure(level=logging.INFO)
+        logging.basicConfig(level=logging.INFO, format=SERENA_LOG_FORMAT)
         project_path = os.path.abspath(project)
         serena_config = SerenaConfig.from_config_file()
         serena_config.language_backend = LanguageBackend.LSP

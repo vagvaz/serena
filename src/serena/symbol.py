@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from time import perf_counter
 from typing import Any, Generic, Literal, NotRequired, Self, TypedDict, TypeVar
 
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 import serena.jetbrains.jetbrains_types as jb
 from solidlsp import SolidLanguageServer

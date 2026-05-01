@@ -10,7 +10,7 @@ import threading
 from typing import Any, cast
 
 from overrides import override
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from solidlsp import ls_types
 from solidlsp.ls import LanguageServerDependencyProvider, LanguageServerDependencyProviderSinglePath, SolidLanguageServer

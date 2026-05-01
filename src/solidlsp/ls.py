@@ -17,8 +17,8 @@ from time import perf_counter, sleep
 from typing import Any, Optional, Self, Union, cast
 
 import pathspec
-from sensai.util.pickle import getstate, load_pickle
-from sensai.util.string import ToStringMixin
+from serena.util.pickle_utils import getstate, load_pickle
+from serena.util.string_utils import ToStringMixin
 
 from serena.util.file_system import match_path
 from serena.util.text_utils import MatchedConsecutiveLines

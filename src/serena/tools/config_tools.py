@@ -1,4 +1,4 @@
-from sensai.util.helper import mark_used
+from serena.util.misc import mark_used
 
 from serena.tools import Tool, ToolMarkerDoesNotRequireActiveProject, ToolMarkerOptional
 

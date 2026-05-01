@@ -20,7 +20,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from serena.config.serena_config import LanguageBackend, SerenaConfig
 from serena.session_manager import SessionManager

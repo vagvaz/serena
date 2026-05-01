@@ -5,11 +5,11 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import dataclass
 from typing import Generic, TypeVar
 
-from sensai.util import logging
-from sensai.util.logging import LogTime
+import logging
+from serena.util.logging import LogTime
 
 from serena.util.logging import log_context
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 log = logging.getLogger(__name__)
 T = TypeVar("T")

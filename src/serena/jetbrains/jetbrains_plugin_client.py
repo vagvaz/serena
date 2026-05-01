@@ -14,7 +14,7 @@ from typing import Any, Literal, Optional, Self, TypeVar, cast
 
 import requests
 from requests import Response
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 import serena.jetbrains.jetbrains_types as jb
 from serena.config.serena_config import RegisteredProject

@@ -7,7 +7,7 @@ from __future__ import annotations
 from enum import Enum, IntEnum
 from typing import TYPE_CHECKING, NotRequired, Union
 
-from sensai.util.helper import mark_used
+from serena.util.misc import mark_used
 from typing_extensions import TypedDict
 
 from solidlsp.lsp_protocol_handler.lsp_types import DiagnosticSeverity, SymbolKind

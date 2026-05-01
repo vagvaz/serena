@@ -12,8 +12,8 @@ from typing import TYPE_CHECKING, Any, Iterator, Protocol, Self, TypeVar, cast
 from mcp import Implementation
 from mcp.server.fastmcp import Context
 from mcp.server.fastmcp.utilities.func_metadata import FuncMetadata, func_metadata
-from sensai.util import logging
-from sensai.util.string import dict_string
+import logging
+from serena.util.string_utils import dict_string
 
 from serena.config.serena_config import LanguageBackend
 from serena.project import MemoriesManager, Project

@@ -3,7 +3,7 @@ import os.path
 import threading
 from collections.abc import Iterator
 
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from serena.config.serena_config import SerenaPaths
 from solidlsp import SolidLanguageServer

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pathspec
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from serena.util.file_system import GitignoreParser, match_path
 from solidlsp.ls_utils import FileUtils

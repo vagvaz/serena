@@ -3,7 +3,7 @@ from collections.abc import Callable
 from enum import Enum
 from typing import Generic, TypeVar
 
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 
 class TimeoutException(Exception):

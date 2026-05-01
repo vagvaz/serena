@@ -22,10 +22,10 @@ from typing import TYPE_CHECKING, Optional, TypeVar
 
 import requests
 import webview
-from sensai.util import logging
-from sensai.util.helper import mark_used
-from sensai.util.logging import LogTime
-from sensai.util.string import dict_string
+import logging
+from serena.util.misc import mark_used
+from serena.util.logging import LogTime
+from serena.util.string_utils import dict_string
 
 from interprompt.jinja_template import JinjaTemplate
 from serena import serena_version

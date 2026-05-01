@@ -4,7 +4,7 @@ from enum import Enum
 from typing import Any, Generic, Literal, TypeVar
 
 import yaml
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 from .jinja_template import JinjaTemplate, ParameterizedTemplateInterface
 

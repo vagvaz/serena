@@ -1,11 +1,24 @@
-import logging
+from __future__ import annotations
 
-from sensai.util.git import GitStatus
+import logging
+from dataclasses import dataclass
 
 from ..constants import REPO_ROOT
 from .shell import subprocess_check_output
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class GitStatus:
+    commit: str
+    has_unstaged_changes: bool
+    has_staged_uncommitted_changes: bool
+    has_untracked_files: bool
+
+    @property
+    def is_clean(self) -> bool:
+        return not (self.has_unstaged_changes or self.has_staged_uncommitted_changes or self.has_untracked_files)
 
 
 def get_git_status() -> GitStatus | None:

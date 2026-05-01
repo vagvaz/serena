@@ -7,7 +7,7 @@ from typing import NamedTuple
 
 import pathspec
 from pathspec import PathSpec
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 log = logging.getLogger(__name__)
 

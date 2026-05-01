@@ -15,7 +15,7 @@ from mcp.server.fastmcp.server import FastMCP, Settings
 from mcp.server.fastmcp.tools.base import Tool as MCPTool
 from mcp.types import ToolAnnotations
 from pydantic_settings import SettingsConfigDict
-from sensai.util import logging
+import logging
 
 from serena.agent import (
     SerenaAgent,

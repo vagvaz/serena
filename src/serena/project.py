@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
-from sensai.util.string import TextBuilder, ToStringMixin
+from serena.util.string_utils import TextBuilder, ToStringMixin
 
 from serena.config.serena_config import (
     ProjectConfig,

@@ -12,7 +12,7 @@ from agno.models.base import Model
 from agno.tools.function import Function
 from agno.tools.toolkit import Toolkit
 from dotenv import load_dotenv
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from serena.agent import SerenaAgent, Tool
 from serena.config.context_mode import SerenaAgentContext

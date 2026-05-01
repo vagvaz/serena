@@ -1,7 +1,7 @@
 import logging
 from typing import Any, Optional
 
-from sensai.util.pickle import dump_pickle, load_pickle
+from serena.util.pickle_utils import dump_pickle, load_pickle
 
 log = logging.getLogger(__name__)
 

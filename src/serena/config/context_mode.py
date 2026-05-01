@@ -8,8 +8,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Self
 
 import yaml
-from sensai.util import logging
-from sensai.util.string import ToStringMixin
+import logging
+from serena.util.string_utils import ToStringMixin
 
 from serena.config.serena_config import SerenaPaths, ToolInclusionDefinition
 from serena.constants import (

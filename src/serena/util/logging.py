@@ -1,17 +1,17 @@
 import copy
+import logging
 import queue
+import sys
 import threading
+import time
 from collections.abc import Callable
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
+from logging import FileHandler, getLogger
 from typing import Optional
 
-from sensai.util import logging
-
 from serena.constants import LOG_MESSAGES_BUFFER_SIZE, SERENA_LOG_FORMAT
-
-lg = logging
 
 _log_session_id: ContextVar[str | None] = ContextVar("serena_log_session_id", default=None)
 _log_project_name: ContextVar[str | None] = ContextVar("serena_log_project_name", default=None)
@@ -157,14 +157,139 @@ class SuspendedLoggersContext:
         self.saved_root_level: Optional[int] = None
 
     def __enter__(self) -> "SuspendedLoggersContext":
-        root_logger = lg.getLogger()
+        root_logger = getLogger()
         self.saved_root_handlers = root_logger.handlers.copy()
         self.saved_root_level = root_logger.level
         root_logger.handlers.clear()
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb) -> None:  # type: ignore[override]
-        root_logger = lg.getLogger()
+        root_logger = getLogger()
         root_logger.handlers = self.saved_root_handlers
         if self.saved_root_level is not None:
             root_logger.setLevel(self.saved_root_level)
+
+
+log = getLogger(__name__)
+
+
+# ── StopWatch ────────────────────────────────────────────────────────
+
+class StopWatch:
+    """
+    A stop watch for timing an execution.  Constructing an instance starts it.
+    """
+
+    def __init__(self, start: bool = True) -> None:
+        self.start_time = time.time()
+        self._elapsed_secs = 0.0
+        self.is_running = start
+
+    def reset(self, start: bool = True) -> None:
+        self.start_time = time.time()
+        self._elapsed_secs = 0.0
+        self.is_running = start
+
+    def restart(self) -> None:
+        self.reset(start=True)
+
+    def _get_elapsed_time_since_last_start(self) -> float:
+        if self.is_running:
+            return time.time() - self.start_time
+        return 0.0
+
+    def pause(self) -> None:
+        if self.is_running:
+            self._elapsed_secs += self._get_elapsed_time_since_last_start()
+            self.is_running = False
+
+    def resume(self) -> None:
+        if not self.is_running:
+            self.start_time = time.time()
+            self.is_running = True
+
+    def get_elapsed_time_secs(self) -> float:
+        if self.is_running:
+            return self._elapsed_secs + self._get_elapsed_time_since_last_start()
+        return self._elapsed_secs
+
+    def get_elapsed_time_string(self) -> str:
+        secs = self.get_elapsed_time_secs()
+        if secs < 60:
+            return f"{secs:.1f}s"
+        minutes = int(secs / 60)
+        secs = secs - minutes * 60
+        return f"{minutes:02d}:{secs:04.1f}min"
+
+
+# ── LogTime ──────────────────────────────────────────────────────────
+
+class LogTime:
+    """
+    Context manager that logs execution time::
+
+        with LogTime("Doing X"):
+            do_stuff()
+        # logs "Doing X ... completed in 0.42s"
+    """
+
+    def __init__(self, name: str, enabled: bool = True, logger: logging.Logger | None = None) -> None:
+        self.name = name
+        self.enabled = enabled
+        self.stopwatch: StopWatch | None = None
+        self.logger = logger or log
+
+    def start(self) -> None:
+        self.stopwatch = StopWatch()
+        if self.enabled:
+            self.logger.info(f"{self.name} starting ...")
+
+    def stop(self) -> None:
+        if self.stopwatch is not None and self.enabled:
+            self.logger.info(f"{self.name} completed in {self.stopwatch.get_elapsed_time_string()}")
+
+    def __enter__(self) -> "LogTime":
+        self.start()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if exc_type is None:
+            self.stop()
+        elif self.stopwatch is not None and self.enabled:
+            self.logger.error(f"{self.name} failed after {self.stopwatch.get_elapsed_time_string()}")
+
+
+# ── Logging helpers ──────────────────────────────────────────────────
+
+def datetime_tag() -> str:
+    """Return a compact datetime string for use in log file names."""
+    from datetime import datetime
+    return datetime.now().strftime("%Y%m%d-%H%M%S")
+
+
+def _add_file_logger(path: str, append: bool = True) -> FileHandler:
+    """Add a file handler to the root logger and return it."""
+    import os
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    handler = FileHandler(path, mode="a" if append else "w")
+    getLogger().addHandler(handler)
+    return handler
+
+
+class FileLoggerContext:
+    """Context manager that enables file-based logging within a ``with`` block."""
+
+    def __init__(self, path: str, append: bool = True, enabled: bool = True) -> None:
+        self.path = path
+        self.append = append
+        self.enabled = enabled
+        self._handler: FileHandler | None = None
+
+    def __enter__(self) -> FileHandler | None:
+        if self.enabled:
+            self._handler = _add_file_logger(self.path, append=self.append)
+        return self._handler
+
+    def __exit__(self, exc_type, exc_val, exc_tb) -> None:
+        if self._handler is not None:
+            getLogger().removeHandler(self._handler)

@@ -8,7 +8,7 @@ import pathlib
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal
 
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 if TYPE_CHECKING:
     from solidlsp.ls_config import Language

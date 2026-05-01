@@ -12,7 +12,7 @@ from queue import Empty, Queue
 from typing import Any
 
 import psutil
-from sensai.util.string import ToStringMixin
+from serena.util.string_utils import ToStringMixin
 
 from solidlsp.ls_config import Language
 from solidlsp.ls_exceptions import SolidLSPException

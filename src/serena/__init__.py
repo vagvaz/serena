@@ -24,12 +24,9 @@ def serena_version() -> str:
 
 
 def _init_log_configuration() -> None:
-    from sensai.util import logging
+    import logging
 
-    def _configure() -> None:
-        logging.getLogger("PIL").setLevel(logging.WARNING)
-
-    logging.set_configure_callback(_configure)
+    logging.getLogger("PIL").setLevel(logging.WARNING)
 
 
 _init_log_configuration()

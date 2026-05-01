@@ -9,7 +9,7 @@ import shutil
 import threading
 
 from overrides import override
-from sensai.util.logging import LogTime
+from serena.util.logging import LogTime
 
 from solidlsp.ls import SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
