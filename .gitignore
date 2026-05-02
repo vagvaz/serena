@@ -201,6 +201,7 @@ pylint.html
 !*.template.yml
 /agent-ui
 /test/**/.serena
+/.serena/active_state.json
 
 # clojure-lsp temporary files
 .calva/
