@@ -134,6 +134,12 @@ ignored_memory_patterns: []
 # Maps the language key to the options.
 # Have a look at the docstring of the constructors of the LS implementations within solidlsp (e.g., for C# or PHP) to see which options are available.
 # No documentation on options means no options are available.
+# controls how symbol cache entries are stored on disk.
+# "monolithic" (default): all entries in a single pickle file.
+# "per_file": individual files, lazy loading, better branch-switching persistence.
+# If not set, the global setting from serena_config.yml is used.
+cache_storage_mode: per_file
+
 ls_specific_settings: {}
 
 # list of mode names to be activated additionally for this project.
