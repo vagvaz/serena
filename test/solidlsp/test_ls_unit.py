@@ -32,13 +32,7 @@ class _TestLS(SolidLanguageServer):
         self._encoding = config.encoding
         self.language_id = "python"
         self.repository_root_path = os.path.abspath(repo_root)
-        self.open_file_buffers: dict = {}
         self.language = Language.PYTHON
-        self._ls_specific_raw_document_symbols_cache_version = 1
-        self._raw_document_symbols_cache: dict = {}
-        self._raw_document_symbols_cache_is_modified: bool = False
-        self._document_symbols_cache: dict = {}
-        self._document_symbols_cache_is_modified: bool = False
         self._cache_storage_mode = settings.cache_storage_mode
         self.cache_dir = (
             Path(settings.project_data_path) / SolidLanguageServer.CACHE_FOLDER_NAME / self.language_id
@@ -46,15 +40,36 @@ class _TestLS(SolidLanguageServer):
         self.cache_dir.mkdir(parents=True, exist_ok=True)
         self._has_waited_for_cross_file_references = False
 
+        # Create extracted cache classes
+        from solidlsp.symbol_cache import (
+            RawSymbolCache,
+            HighLevelSymbolCache,
+            make_raw_cache_version,
+            make_high_level_cache_version,
+        )
+        from solidlsp.file_buffer_manager import FileBufferManager
+
+        self._raw_cache = RawSymbolCache(
+            cache_dir=self.cache_dir,
+            cache_storage_mode=settings.cache_storage_mode,
+            version_func=make_raw_cache_version(1),
+        )
+        self._high_level_cache = HighLevelSymbolCache(
+            cache_dir=self.cache_dir,
+            cache_storage_mode=settings.cache_storage_mode,
+            version_func=make_high_level_cache_version(None),
+        )
+        self._file_buffer_manager = FileBufferManager(
+            encoding=self._encoding,
+            repository_root_path=self.repository_root_path,
+            language_server=self,
+        )
+
         # Mock the server
         self.server = mock_server
         self.server_started = False
         self._ignore_spec = None
         self._request_timeout: float | None = None
-
-        # Load caches (no-op for fresh dirs)
-        self._load_raw_document_symbols_cache()
-        self._load_document_symbols_cache()
 
     def _create_dependency_provider(self):
         raise NotImplementedError("not needed in tests")
