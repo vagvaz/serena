@@ -11,10 +11,10 @@ import subprocess
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
+
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -95,10 +95,12 @@ class ZigLanguageServer(SolidLanguageServer):
         return True
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        self._setup_runtime_dependency()
-
-        super().__init__(config, repository_root_path, ProcessLaunchInfo(cmd="zls", cwd=repository_root_path), "zig", solidlsp_settings)
+        super().__init__(config, repository_root_path, "zig", solidlsp_settings)
         self.request_id = 0
+
+    def _create_dependency_provider(self):
+        self._setup_runtime_dependency()
+        return SimpleDependencyProvider(cmd="zls", custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:

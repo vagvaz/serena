@@ -8,11 +8,11 @@ from collections.abc import Hashable
 from overrides import override
 
 from solidlsp import ls_types
-from solidlsp.ls import RawDocumentSymbol, SolidLanguageServer
+from solidlsp.ls import RawDocumentSymbol, SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.ls_types import SymbolKind
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
+
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -51,12 +51,13 @@ class SourceKitLSP(SolidLanguageServer):
         sourcekit_version = self._get_sourcekit_lsp_version()
         log.info(f"Starting sourcekit lsp with version: {sourcekit_version}")
 
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd="sourcekit-lsp", cwd=repository_root_path), "swift", solidlsp_settings
-        )
+        super().__init__(config, repository_root_path, "swift", solidlsp_settings)
         self.request_id = 0
         self._did_sleep_before_requesting_references = False
         self._initialization_timestamp: float | None = None
+
+    def _create_dependency_provider(self):
+        return SimpleDependencyProvider(cmd="sourcekit-lsp", custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @override
     def _document_symbols_cache_fingerprint(self) -> Hashable:

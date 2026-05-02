@@ -41,7 +41,6 @@ class HaxeLanguageServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "haxe",
             solidlsp_settings,
         )

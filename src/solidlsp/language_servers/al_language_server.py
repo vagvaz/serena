@@ -18,12 +18,12 @@ from overrides import override
 
 from solidlsp import ls_types
 from solidlsp.language_servers.common import quote_windows_path
-from solidlsp.ls import DocumentSymbols, LSPFileBuffer, RawDocumentSymbol, SolidLanguageServer
+from solidlsp.ls import DocumentSymbols, LSPFileBuffer, RawDocumentSymbol, SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_types import SymbolKind, UnifiedSymbolInformation
 from solidlsp.ls_utils import FileUtils
 from solidlsp.lsp_protocol_handler.lsp_types import Definition, DefinitionParams, LocationLink
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
+
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -108,22 +108,22 @@ class ALLanguageServer(SolidLanguageServer):
             3. Extract and configure the platform-specific executable
 
         """
-        # Setup runtime dependencies and get the language server command
-        # This will download the AL extension if needed
-        cmd = self._setup_runtime_dependencies(config, solidlsp_settings)
-
         self._project_load_check_supported: bool = True
         """Whether the AL server supports the project load status check request.
-        
+
         Some AL server versions don't support the 'al/hasProjectClosureLoadedRequest'
         custom LSP request. This flag starts as True and is set to False if the
         request fails, preventing repeated unsuccessful attempts.
         """
 
-        super().__init__(config, repository_root_path, ProcessLaunchInfo(cmd=cmd, cwd=repository_root_path), "al", solidlsp_settings)
+        super().__init__(config, repository_root_path, "al", solidlsp_settings)
 
         # Cache mapping (file_path, line, char) -> original_full_name for hover injection
         self._al_original_names: dict[tuple[str, int, int], str] = {}
+
+    def _create_dependency_provider(self):
+        cmd = type(self)._setup_runtime_dependencies(None, self._solidlsp_settings)
+        return SimpleDependencyProvider(cmd=cmd, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _normalize_path(path: str) -> str:

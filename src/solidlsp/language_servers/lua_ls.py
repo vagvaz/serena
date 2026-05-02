@@ -16,12 +16,11 @@ from pathlib import Path
 
 from overrides import override
 
-from solidlsp.ls import RawDocumentSymbol, SolidLanguageServer
+from solidlsp.ls import RawDocumentSymbol, SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_types import SymbolKind
 from solidlsp.ls_utils import FileUtils
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -164,12 +163,12 @@ class LuaLanguageServer(SolidLanguageServer):
         return lua_ls_path
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        lua_ls_path = self._setup_runtime_dependency(solidlsp_settings)
-
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=lua_ls_path, cwd=repository_root_path), "lua", solidlsp_settings
-        )
+        super().__init__(config, repository_root_path, "lua", solidlsp_settings)
         self.request_id = 0
+
+    def _create_dependency_provider(self):
+        lua_ls_path = self._setup_runtime_dependency(self._solidlsp_settings)
+        return SimpleDependencyProvider(cmd=lua_ls_path, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @override
     def _document_symbols_cache_fingerprint(self) -> Hashable:

@@ -6,7 +6,7 @@ from typing import Any
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
 from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
@@ -58,15 +58,12 @@ class RLanguageServer(SolidLanguageServer):
             raise RuntimeError("R is not installed. Please install R from https://www.r-project.org/")
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        # Check R installation
+        super().__init__(config, repository_root_path, "r", solidlsp_settings)
+
+    def _create_dependency_provider(self):
         self._check_r_installation()
-
-        # R command to start language server
-        # Use --vanilla for minimal startup and --quiet to suppress all output except LSP
-        # Set specific options to improve parsing stability
         r_cmd = 'R --vanilla --quiet --slave -e "options(languageserver.debug_mode = FALSE); languageserver::run()"'
-
-        super().__init__(config, repository_root_path, ProcessLaunchInfo(cmd=r_cmd, cwd=repository_root_path), "r", solidlsp_settings)
+        return SimpleDependencyProvider(cmd=r_cmd, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:

@@ -243,7 +243,7 @@ class LuauLanguageServer(SolidLanguageServer):
         return self.DependencyProvider(self._custom_settings, self._ls_resources_dir)
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        super().__init__(config, repository_root_path, None, "luau", solidlsp_settings)
+        super().__init__(config, repository_root_path, "luau", solidlsp_settings)
         self.server_ready = threading.Event()
 
     @staticmethod

@@ -146,7 +146,6 @@ class AnsibleLanguageServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "ansible",
             solidlsp_settings,
         )

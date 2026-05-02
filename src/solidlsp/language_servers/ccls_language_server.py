@@ -63,7 +63,7 @@ class CCLS(SolidLanguageServer):
         Creates a CclsLanguageServer instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
         """
-        super().__init__(config, repository_root_path, None, "cpp", solidlsp_settings)
+        super().__init__(config, repository_root_path, "cpp", solidlsp_settings)
         self.server_ready = threading.Event()
 
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:

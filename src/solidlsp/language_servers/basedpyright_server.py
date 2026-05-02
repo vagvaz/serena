@@ -41,7 +41,6 @@ class BasedPyrightServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "python",
             solidlsp_settings,
         )

@@ -11,10 +11,9 @@ import shutil
 from overrides import override
 
 from solidlsp import ls_types
-from solidlsp.ls import DocumentSymbols, LSPFileBuffer, SolidLanguageServer
+from solidlsp.ls import DocumentSymbols, LSPFileBuffer, SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -179,16 +178,11 @@ class FortranLanguageServer(SolidLanguageServer):
         return fortls_path
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        # Check fortls installation
+        super().__init__(config, repository_root_path, "fortran", solidlsp_settings)
+
+    def _create_dependency_provider(self):
         fortls_path = self._check_fortls_installation()
-
-        # Command to start fortls language server
-        # fortls uses stdio for LSP communication by default
-        fortls_cmd = f"{fortls_path}"
-
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=fortls_cmd, cwd=repository_root_path), "fortran", solidlsp_settings
-        )
+        return SimpleDependencyProvider(cmd=fortls_path, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:
