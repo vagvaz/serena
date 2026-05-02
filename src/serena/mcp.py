@@ -43,8 +43,10 @@ _connection_cwd: ContextVar[str | None] = ContextVar("_connection_cwd", default=
 def configure_logging(*args, **kwargs) -> None:  # type: ignore
     # We only do something here if logging has not yet been configured.
     # Normally, logging is configured in the MCP server startup script.
-    if not logging.is_enabled():
-        logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=SERENA_LOG_FORMAT)
+    # Check if root logger already has handlers rather than using nonexistent logging.is_enabled().
+    if logging.getLogger().handlers:
+        return
+    logging.basicConfig(level=logging.INFO, stream=sys.stderr, format=SERENA_LOG_FORMAT)
 
 
 # patch the logging configuration function in fastmcp, because it's hard-coded and broken

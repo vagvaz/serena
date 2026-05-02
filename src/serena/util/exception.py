@@ -2,8 +2,6 @@ import os
 import sys
 from enum import Enum
 
-from serena.agent import log
-
 
 def is_headless_environment() -> bool:
     """
@@ -46,6 +44,9 @@ def show_fatal_exception_safe(e: Exception) -> None:
     Shows the given exception in the GUI log viewer on the main thread and ensures that the exception is logged or at
     least printed to stderr.
     """
+    # Lazy import to avoid circular dependency: serena.util.exception -> serena.agent -> serena.tools -> tools_base -> exception
+    from serena.agent import log
+
     # Log the error and print it to stderr
     log.error(f"Fatal exception: {e}", exc_info=e)
     print(f"Fatal exception: {e}", file=sys.stderr)

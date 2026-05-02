@@ -53,8 +53,8 @@ class TestGlobalIgnoredPaths:
             self.project_path,
             global_ignored_paths=["node_modules"],
         )
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
-        assert not project.is_ignored_path(str(self.project_path / "src" / "app.py"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "src" / "app.py"))
 
     def test_additive_merge_of_global_and_project_patterns(self) -> None:
         """Global + project patterns are merged additively (both applied)."""
@@ -64,11 +64,11 @@ class TestGlobalIgnoredPaths:
             global_ignored_paths=["node_modules"],
         )
         # Global pattern should be applied
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
         # Project pattern should also be applied
-        assert project.is_ignored_path(str(self.project_path / "build" / "output.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "build" / "output.js"))
         # Non-ignored files should not be affected
-        assert not project.is_ignored_path(str(self.project_path / "src" / "app.py"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "src" / "app.py"))
 
     def test_empty_global_ignored_paths_has_no_effect(self) -> None:
         """Empty global ignored_paths (default) has no effect on existing behavior."""
@@ -78,9 +78,9 @@ class TestGlobalIgnoredPaths:
             global_ignored_paths=[],
         )
         # Project pattern still works
-        assert project.is_ignored_path(str(self.project_path / "build" / "output.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "build" / "output.js"))
         # Non-ignored files still accessible
-        assert not project.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
 
     def test_duplicate_patterns_across_global_and_project(self) -> None:
         """Duplicate patterns across global and project do not cause errors."""
@@ -89,9 +89,9 @@ class TestGlobalIgnoredPaths:
             project_ignored_paths=["node_modules", "build"],
             global_ignored_paths=["node_modules", "build"],
         )
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
-        assert project.is_ignored_path(str(self.project_path / "build" / "output.js"))
-        assert not project.is_ignored_path(str(self.project_path / "src" / "app.py"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg" / "index.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "build" / "output.js"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "src" / "app.py"))
 
     def test_glob_patterns_in_global_ignored_paths(self) -> None:
         """Global ignored_paths support gitignore-style glob patterns."""
@@ -99,8 +99,8 @@ class TestGlobalIgnoredPaths:
             self.project_path,
             global_ignored_paths=["*.log"],
         )
-        assert project.is_ignored_path(str(self.project_path / "debug.log"))
-        assert not project.is_ignored_path(str(self.project_path / "main.py"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "debug.log"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "main.py"))
 
 
 class TestRegisteredProjectGlobalIgnoredPaths:
@@ -130,7 +130,7 @@ class TestRegisteredProjectGlobalIgnoredPaths:
             project_config=config,
         )
         project = registered.get_project_instance(serena_config=serena_config)
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
 
     def test_get_project_instance_without_global_ignored_paths(self) -> None:
         """RegisteredProject without global_ignored_paths defaults to empty."""
@@ -146,7 +146,7 @@ class TestRegisteredProjectGlobalIgnoredPaths:
         )
         serena_config = SerenaConfig(gui_log_window=False, web_dashboard=False, ignored_paths=[])
         project = registered.get_project_instance(serena_config=serena_config)
-        assert not project.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
 
     def test_from_project_root_passes_global_ignored_paths(self) -> None:
         """RegisteredProject.from_project_root() threads global_ignored_paths to Project."""
@@ -162,7 +162,7 @@ class TestRegisteredProjectGlobalIgnoredPaths:
             serena_config=serena_config,
         )
         project = registered.get_project_instance(serena_config=serena_config)
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
 
     def test_from_project_instance_passes_global_ignored_paths(self) -> None:
         """RegisteredProject.from_project_instance() threads global_ignored_paths to Project."""
@@ -181,7 +181,7 @@ class TestRegisteredProjectGlobalIgnoredPaths:
         registered = RegisteredProject.from_project_instance(project)
         # The registered project already has a project_instance, so get_project_instance() returns it directly
         retrieved = registered.get_project_instance(serena_config=serena_config)
-        assert retrieved.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
+        assert retrieved.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
 
 
 class TestGlobalIgnoredPathsWithGitignore:
@@ -219,13 +219,13 @@ class TestGlobalIgnoredPathsWithGitignore:
             serena_config=serena_config,
         )
         # Global pattern: node_modules
-        assert project.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "node_modules" / "pkg.js"))
         # Project pattern: build
-        assert project.is_ignored_path(str(self.project_path / "build" / "output.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "build" / "output.js"))
         # Gitignore pattern: dist/
-        assert project.is_ignored_path(str(self.project_path / "dist" / "bundle.js"))
+        assert project.filesystem.is_ignored_path(str(self.project_path / "dist" / "bundle.js"))
         # Non-ignored file
-        assert not project.is_ignored_path(str(self.project_path / "main.py"))
+        assert not project.filesystem.is_ignored_path(str(self.project_path / "main.py"))
 
 
 class TestSerenaConfigIgnoredPaths:

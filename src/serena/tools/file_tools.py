@@ -35,9 +35,9 @@ class ReadFileTool(Tool):
             required for the task.
         :return: the full text of the file at the given relative path
         """
-        self.project.validate_relative_path(relative_path, require_not_ignored=True)
+        self.project.filesystem.validate_relative_path(relative_path, require_not_ignored=True)
 
-        result = self.project.read_file(relative_path)
+        result = self.project.filesystem.read_file(relative_path)
         result_lines = result.splitlines()
         if end_line is None:
             result_lines = result_lines[start_line:]
@@ -66,7 +66,7 @@ class CreateTextFileTool(Tool, ToolMarkerCanEdit):
         will_overwrite_existing = abs_path.exists()
 
         if will_overwrite_existing:
-            self.project.validate_relative_path(relative_path, require_not_ignored=True)
+            self.project.filesystem.validate_relative_path(relative_path, require_not_ignored=True)
         else:
             assert abs_path.is_relative_to(self.get_project_root()), (
                 f"Cannot create file outside of the project directory, got {relative_path=}"
@@ -98,7 +98,7 @@ class ListDirTool(Tool):
         :return: a JSON object with the names of directories and files within the given directory
         """
         # Check if the directory exists before validation
-        if not self.project.relative_path_exists(relative_path):
+        if not self.project.filesystem.relative_path_exists(relative_path):
             error_info = {
                 "error": f"Directory not found: {relative_path}",
                 "project_root": self.get_project_root(),
@@ -106,14 +106,14 @@ class ListDirTool(Tool):
             }
             return self._to_json(error_info)
 
-        self.project.validate_relative_path(relative_path, require_not_ignored=skip_ignored_files)
+        self.project.filesystem.validate_relative_path(relative_path, require_not_ignored=skip_ignored_files)
 
         dirs, files = scan_directory(
             os.path.join(self.get_project_root(), relative_path),
             relative_to=self.get_project_root(),
             recursive=recursive,
-            is_ignored_dir=self.project.is_ignored_path if skip_ignored_files else None,
-            is_ignored_file=self.project.is_ignored_path if skip_ignored_files else None,
+            is_ignored_dir=self.project.filesystem.is_ignored_path if skip_ignored_files else None,
+            is_ignored_file=self.project.filesystem.is_ignored_path if skip_ignored_files else None,
         )
 
         result = self._to_json({"dirs": dirs, "files": files})
@@ -133,13 +133,13 @@ class FindFileTool(Tool):
         :param relative_path: the relative path to the directory to search in; pass "." to scan the project root
         :return: a JSON object with the list of matching files
         """
-        self.project.validate_relative_path(relative_path, require_not_ignored=True)
+        self.project.filesystem.validate_relative_path(relative_path, require_not_ignored=True)
 
         dir_to_scan = os.path.join(self.get_project_root(), relative_path)
 
         # find the files by ignoring everything that doesn't match
         def is_ignored_file(abs_path: str) -> bool:
-            if self.project.is_ignored_path(abs_path):
+            if self.project.filesystem.is_ignored_path(abs_path):
                 return True
             filename = os.path.basename(abs_path)
             return not fnmatch(filename, file_mask)
@@ -147,7 +147,7 @@ class FindFileTool(Tool):
         _dirs, files = scan_directory(
             path=dir_to_scan,
             recursive=True,
-            is_ignored_dir=self.project.is_ignored_path,
+            is_ignored_dir=self.project.filesystem.is_ignored_path,
             is_ignored_file=is_ignored_file,
             relative_to=self.get_project_root(),
         )
@@ -212,7 +212,7 @@ class ReplaceContentTool(Tool, ToolMarkerCanEdit):
         Performs the replacement, with additional options not exposed in the tool.
         This function can be used internally by other tools.
         """
-        self.project.validate_relative_path(relative_path, require_not_ignored=require_not_ignored)
+        self.project.filesystem.validate_relative_path(relative_path, require_not_ignored=require_not_ignored)
         with EditedFileContext(relative_path, self.create_code_editor()) as context:
             original_content = context.get_original_content()
             replacer = ContentReplacer(mode=mode, allow_multiple_occurrences=allow_multiple_occurrences)
@@ -379,7 +379,7 @@ class SearchForPatternTool(Tool):
             raise FileNotFoundError(f"Relative path {relative_path} does not exist.")
 
         if restrict_search_to_code_files:
-            matches = self.project.search_source_files_for_pattern(
+            matches = self.project.filesystem.search_source_files_for_pattern(
                 pattern=substring_pattern,
                 relative_path=relative_path,
                 context_lines_before=context_lines_before,
@@ -394,8 +394,8 @@ class SearchForPatternTool(Tool):
                 _dirs, rel_paths_to_search = scan_directory(
                     path=abs_path,
                     recursive=True,
-                    is_ignored_dir=self.project.is_ignored_path,
-                    is_ignored_file=self.project.is_ignored_path,
+                    is_ignored_dir=self.project.filesystem.is_ignored_path,
+                    is_ignored_file=self.project.filesystem.is_ignored_path,
                     relative_to=self.get_project_root(),
                 )
             # TODO (maybe): not super efficient to walk through the files again and filter if glob patterns are provided
@@ -405,7 +405,7 @@ class SearchForPatternTool(Tool):
                 substring_pattern,
                 context_lines_before=context_lines_before,
                 context_lines_after=context_lines_after,
-                file_reader=self.project.read_file,
+                file_reader=self.project.filesystem.read_file,
                 root_path=self.get_project_root(),
                 paths_include_glob=paths_include_glob,
                 paths_exclude_glob=paths_exclude_glob,

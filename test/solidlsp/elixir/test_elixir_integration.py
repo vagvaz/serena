@@ -116,7 +116,7 @@ class TestElixirProject:
         """Test comprehensive symbol search across the entire project."""
         # Search for all function definitions
         function_pattern = r"def\s+\w+\s*[\(\s]"
-        function_matches = project.search_source_files_for_pattern(function_pattern)
+        function_matches = project.filesystem.search_source_files_for_pattern(function_pattern)
 
         # Should find functions across multiple files
         if function_matches:
@@ -132,7 +132,7 @@ class TestElixirProject:
 
         # Search for struct definitions
         struct_pattern = r"defstruct\s+\["
-        struct_matches = project.search_source_files_for_pattern(struct_pattern)
+        struct_matches = project.filesystem.search_source_files_for_pattern(struct_pattern)
 
         if struct_matches:
             # Should find structs primarily in models.ex
@@ -144,7 +144,7 @@ class TestElixirProject:
         """Test that the language server understands Elixir protocols and implementations."""
         # Search for protocol definitions
         protocol_pattern = r"defprotocol\s+\w+"
-        protocol_matches = project.search_source_files_for_pattern(protocol_pattern, paths_include_glob="**/models.ex")
+        protocol_matches = project.filesystem.search_source_files_for_pattern(protocol_pattern, paths_include_glob="**/models.ex")
 
         if protocol_matches:
             # Should find the Serializable protocol
@@ -153,7 +153,7 @@ class TestElixirProject:
 
         # Search for protocol implementations
         impl_pattern = r"defimpl\s+\w+"
-        impl_matches = project.search_source_files_for_pattern(impl_pattern, paths_include_glob="**/models.ex")
+        impl_matches = project.filesystem.search_source_files_for_pattern(impl_pattern, paths_include_glob="**/models.ex")
 
         if impl_matches:
             # Should find multiple implementations

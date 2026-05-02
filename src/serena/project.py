@@ -353,59 +353,6 @@ class Project(ToStringMixin):
     def path_to_project_yml(self) -> str:
         return self.serena_config.get_project_yml_location(self.project_root)
 
-    def read_file(self, relative_path: str) -> str:
-        """Read a file relative to the project root. Delegates to ProjectFileSystem."""
-        return self._filesystem.read_file(relative_path)
-
-    def is_ignored_path(self, path: str | Path, ignore_non_source_files: bool = False) -> bool:
-        """Check whether the given path is ignored. Delegates to ProjectFileSystem."""
-        return self._filesystem.is_ignored_path(path, ignore_non_source_files=ignore_non_source_files)
-
-    def is_path_in_project(self, path: str | Path) -> bool:
-        """Check if the given path is inside the project directory. Delegates to ProjectFileSystem."""
-        return self._filesystem.is_path_in_project(path)
-
-    def relative_path_exists(self, relative_path: str) -> bool:
-        """Check if the given relative path exists. Delegates to ProjectFileSystem."""
-        return self._filesystem.relative_path_exists(relative_path)
-
-    def validate_relative_path(self, relative_path: str, require_not_ignored: bool = False) -> None:
-        """Validate that the given relative path is safe. Delegates to ProjectFileSystem."""
-        self._filesystem.validate_relative_path(relative_path, require_not_ignored=require_not_ignored)
-
-    def gather_source_files(self, relative_path: str = "") -> list[str]:
-        """Retrieve relative paths of all source files. Delegates to ProjectFileSystem."""
-        return self._filesystem.gather_source_files(relative_path=relative_path)
-
-    def search_source_files_for_pattern(
-        self,
-        pattern: str,
-        relative_path: str = "",
-        context_lines_before: int = 0,
-        context_lines_after: int = 0,
-        paths_include_glob: str | None = None,
-        paths_exclude_glob: str | None = None,
-    ) -> list[MatchedConsecutiveLines]:
-        """Search for a pattern across source files. Delegates to ProjectFileSystem."""
-        return self._filesystem.search_source_files_for_pattern(
-            pattern,
-            relative_path=relative_path,
-            context_lines_before=context_lines_before,
-            context_lines_after=context_lines_after,
-            paths_include_glob=paths_include_glob,
-            paths_exclude_glob=paths_exclude_glob,
-        )
-
-    def retrieve_content_around_line(
-        self, relative_file_path: str, line: int, context_lines_before: int = 0, context_lines_after: int = 0
-    ) -> MatchedConsecutiveLines:
-        """Retrieve content around a line. Delegates to ProjectFileSystem."""
-        return self._filesystem.retrieve_content_around_line(
-            relative_file_path, line=line,
-            context_lines_before=context_lines_before,
-            context_lines_after=context_lines_after,
-        )
-
     def create_language_server_manager(self) -> LanguageServerManager:
         """
         Creates the language server manager for the project, starting one language server per configured programming language.

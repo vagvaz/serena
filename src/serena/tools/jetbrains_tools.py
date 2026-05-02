@@ -283,7 +283,7 @@ class JetBrainsFindReferencingSymbolsTool(Tool, ToolMarkerSymbolicRead, ToolMark
                 ref_line = symbol_dict["reference_line_no"]
                 ref_relative_path = symbol_dict["relative_path"]
                 if not SymbolDTOUtil.is_external_symbol(symbol_dict) and ref_line is not None and ref_line >= 0:
-                    content_around_ref = self.project.retrieve_content_around_line(
+                    content_around_ref = self.project.filesystem.retrieve_content_around_line(
                         relative_file_path=ref_relative_path, line=ref_line, context_lines_before=1, context_lines_after=1
                     )
                     symbol_dict["context"] = content_around_ref.to_display_string()
