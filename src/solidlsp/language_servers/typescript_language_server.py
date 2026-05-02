@@ -78,7 +78,6 @@ class TypeScriptLanguageServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "typescript",
             solidlsp_settings,
         )

@@ -124,7 +124,6 @@ class Marksman(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "markdown",
             solidlsp_settings,
         )

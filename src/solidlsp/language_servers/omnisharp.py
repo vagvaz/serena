@@ -11,12 +11,12 @@ from collections.abc import Iterable
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.ls_exceptions import SolidLSPException
 from solidlsp.ls_utils import DotnetVersion, FileUtils, PlatformId, PlatformUtils
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
+
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -72,13 +72,21 @@ class OmniSharp(SolidLanguageServer):
         """
         Creates an OmniSharp instance. This class is not meant to be instantiated directly. Use LanguageServer.create() instead.
         """
-        omnisharp_executable_path, dll_path = self._setup_runtime_dependencies(config, solidlsp_settings)
-
         slnfilename = find_least_depth_sln_file(repository_root_path)
         if slnfilename is None:
             log.error("No *.sln file found in repository")
             raise SolidLSPException("No SLN file found in repository")
 
+        self._slnfilename = slnfilename
+        super().__init__(config, repository_root_path, "csharp", solidlsp_settings)
+
+        self.server_ready = threading.Event()
+        self.definition_available = threading.Event()
+        self.references_available = threading.Event()
+        self.completions_available = threading.Event()
+
+    def _create_dependency_provider(self):
+        omnisharp_executable_path, dll_path = OmniSharp._setup_runtime_dependencies(None, self._solidlsp_settings)
         cmd = " ".join(
             [
                 omnisharp_executable_path,
@@ -87,7 +95,7 @@ class OmniSharp(SolidLanguageServer):
                 "ascii",
                 "-z",
                 "-s",
-                f'"{slnfilename}"',
+                f'"{self._slnfilename}"',
                 "--hostPID",
                 str(os.getpid()),
                 "DotNet:enablePackageRestore=false",
@@ -111,12 +119,7 @@ class OmniSharp(SolidLanguageServer):
                 "formattingOptions:indentationSize=4",
             ]
         )
-        super().__init__(config, repository_root_path, ProcessLaunchInfo(cmd=cmd, cwd=repository_root_path), "csharp", solidlsp_settings)
-
-        self.server_ready = threading.Event()
-        self.definition_available = threading.Event()
-        self.references_available = threading.Event()
-        self.completions_available = threading.Event()
+        return SimpleDependencyProvider(cmd=cmd, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @override
     def is_ignored_dirname(self, dirname: str) -> bool:

@@ -13,6 +13,7 @@ import sys
 import threading
 
 from solidlsp.ls import (
+    SimpleDependencyProvider,
     SolidLanguageServer,
 )
 from solidlsp.ls_config import LanguageServerConfig
@@ -36,15 +37,11 @@ class MslLanguageServer(SolidLanguageServer):
         Creates an MslLanguageServer instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
         """
-        process_launch_info = ProcessLaunchInfo(cmd=[sys.executable, _MSL_LSP_SCRIPT], cwd=repository_root_path)
-        super().__init__(
-            config,
-            repository_root_path,
-            process_launch_info=process_launch_info,
-            language_id="msl",
-            solidlsp_settings=solidlsp_settings,
-        )
+        super().__init__(config, repository_root_path, "msl", solidlsp_settings)
         self.server_ready = threading.Event()
+
+    def _create_dependency_provider(self):
+        return SimpleDependencyProvider(cmd=[sys.executable, _MSL_LSP_SCRIPT], custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:

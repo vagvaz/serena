@@ -71,7 +71,7 @@ class ClangdLanguageServer(SolidLanguageServer):
         """
         Creates a ClangdLanguageServer instance. This class is not meant to be instantiated directly. Use LanguageServer.create() instead.
         """
-        super().__init__(config, repository_root_path, None, "cpp", solidlsp_settings)
+        super().__init__(config, repository_root_path, "cpp", solidlsp_settings)
         self.server_ready = threading.Event()
         self.service_ready_event = threading.Event()
         self.initialize_searcher_command_available = threading.Event()

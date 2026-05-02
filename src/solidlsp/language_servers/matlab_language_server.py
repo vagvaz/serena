@@ -82,7 +82,6 @@ class MatlabLanguageServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "matlab",
             solidlsp_settings,
         )

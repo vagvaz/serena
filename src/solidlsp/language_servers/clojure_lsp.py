@@ -127,7 +127,6 @@ class ClojureLSP(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "clojure",
             solidlsp_settings,
         )

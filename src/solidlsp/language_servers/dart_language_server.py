@@ -6,7 +6,7 @@ from typing import cast
 
 from overrides import override
 
-from solidlsp.ls import RawDocumentSymbol, SolidLanguageServer
+from solidlsp.ls import RawDocumentSymbol, SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
@@ -32,10 +32,11 @@ class DartLanguageServer(SolidLanguageServer):
         """
         Creates a DartServer instance. This class is not meant to be instantiated directly. Use LanguageServer.create() instead.
         """
-        executable_path = self._setup_runtime_dependencies(solidlsp_settings)
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=executable_path, cwd=repository_root_path), "dart", solidlsp_settings
-        )
+        super().__init__(config, repository_root_path, "dart", solidlsp_settings)
+
+    def _create_dependency_provider(self):
+        executable_path = type(self)._setup_runtime_dependencies(self._solidlsp_settings)
+        return SimpleDependencyProvider(cmd=executable_path, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @override
     def _document_symbols_cache_fingerprint(self) -> Hashable:

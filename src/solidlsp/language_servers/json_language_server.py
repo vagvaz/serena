@@ -36,7 +36,6 @@ class JsonLanguageServer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "json",
             solidlsp_settings,
         )

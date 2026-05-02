@@ -32,7 +32,7 @@ class SystemVerilogLanguageServer(SolidLanguageServer):
     """
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings) -> None:
-        super().__init__(config, repository_root_path, None, "systemverilog", solidlsp_settings)
+        super().__init__(config, repository_root_path, "systemverilog", solidlsp_settings)
 
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
         return self.DependencyProvider(self._custom_settings, self._ls_resources_dir)

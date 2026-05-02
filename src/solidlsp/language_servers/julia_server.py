@@ -2,16 +2,16 @@ import logging
 import os
 import pathlib
 import platform
+import shlex
 import shutil
 import subprocess
 from typing import Any
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -23,30 +23,29 @@ class JuliaLanguageServer(SolidLanguageServer):
     """
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
+        super().__init__(config, repository_root_path, "julia", solidlsp_settings)
+
+    def _create_dependency_provider(self):
         julia_executable = self._setup_runtime_dependency()  # PASS LOGGER
         julia_code = "using LanguageServer; runserver()"
 
         julia_ls_cmd: str | list[str]
         if platform.system() == "Windows":
             # On Windows, pass as list (Serena handles shell=True differently)
-            julia_ls_cmd = [julia_executable, "--startup-file=no", "--history-file=no", "-e", julia_code, repository_root_path]
+            julia_ls_cmd = [julia_executable, "--startup-file=no", "--history-file=no", "-e", julia_code, self.repository_root_path]
         else:
             # On Linux/macOS, build shell-escaped string
-            import shlex
-
             julia_ls_cmd = (
                 f"{shlex.quote(julia_executable)} "
                 f"--startup-file=no "
                 f"--history-file=no "
                 f"-e {shlex.quote(julia_code)} "
-                f"{shlex.quote(repository_root_path)}"
+                f"{shlex.quote(self.repository_root_path)}"
             )
 
         log.info(f"[JULIA DEBUG] Command: {julia_ls_cmd}")
 
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=julia_ls_cmd, cwd=repository_root_path), "julia", solidlsp_settings
-        )
+        return SimpleDependencyProvider(cmd=julia_ls_cmd, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _setup_runtime_dependency() -> str:

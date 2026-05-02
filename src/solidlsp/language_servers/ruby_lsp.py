@@ -18,10 +18,9 @@ import threading
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams, InitializeResult
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -41,15 +40,18 @@ class RubyLsp(SolidLanguageServer):
         Creates a RubyLsp instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
         """
-        ruby_lsp_executable = self._setup_runtime_dependencies(config, repository_root_path, solidlsp_settings)
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=ruby_lsp_executable, cwd=repository_root_path), "ruby", solidlsp_settings
-        )
+        super().__init__(config, repository_root_path, "ruby", solidlsp_settings)
         self.analysis_complete = threading.Event()
         self.service_ready_event = threading.Event()
 
         # Set timeout for ruby-lsp requests - ruby-lsp is fast
         self.set_request_timeout(30.0)  # 30 seconds for initialization and requests
+
+    def _create_dependency_provider(self):
+        ruby_lsp_executable = self._setup_runtime_dependencies(
+            None, self.repository_root_path, self._solidlsp_settings
+        )
+        return SimpleDependencyProvider(cmd=ruby_lsp_executable, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @override
     def is_ignored_dirname(self, dirname: str) -> bool:

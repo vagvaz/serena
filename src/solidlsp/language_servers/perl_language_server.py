@@ -13,11 +13,10 @@ from typing import Any
 
 from overrides import override
 
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import LanguageServerConfig
 from solidlsp.ls_utils import PlatformId, PlatformUtils
 from solidlsp.lsp_protocol_handler.lsp_types import DidChangeConfigurationParams, InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -100,13 +99,12 @@ class PerlLanguageServer(SolidLanguageServer):
         return "perl -MPerl::LanguageServer -e 'Perl::LanguageServer::run'"
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings):
-        # Setup runtime dependencies before initializing
-        perl_ls_cmd = self._setup_runtime_dependencies()
-
-        super().__init__(
-            config, repository_root_path, ProcessLaunchInfo(cmd=perl_ls_cmd, cwd=repository_root_path), "perl", solidlsp_settings
-        )
+        super().__init__(config, repository_root_path, "perl", solidlsp_settings)
         self.request_id = 0
+
+    def _create_dependency_provider(self):
+        perl_ls_cmd = self._setup_runtime_dependencies()
+        return SimpleDependencyProvider(cmd=perl_ls_cmd, custom_settings=self._custom_settings, ls_resources_dir=self._ls_resources_dir)
 
     @staticmethod
     def _get_initialize_params(repository_absolute_path: str) -> InitializeParams:

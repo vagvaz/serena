@@ -211,7 +211,7 @@ class CSharpLanguageServer(SolidLanguageServer):
         Creates a CSharpLanguageServer instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
         """
-        super().__init__(config, repository_root_path, None, "csharp", solidlsp_settings)
+        super().__init__(config, repository_root_path, "csharp", solidlsp_settings)
         # Cache for original Roslyn symbol names with type annotations
         # Key: (relative_file_path, line, character) -> Value: original name
         self._original_symbol_names: dict[tuple[str, int, int], str] = {}

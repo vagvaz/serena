@@ -157,7 +157,7 @@ class EclipseJDTLS(SolidLanguageServer):
         Creates a new EclipseJDTLS instance initializing the language server settings appropriately.
         This class is not meant to be instantiated directly. Use LanguageServer.create() instead.
         """
-        super().__init__(config, repository_root_path, None, "java", solidlsp_settings)
+        super().__init__(config, repository_root_path, "java", solidlsp_settings)
 
         # Extract runtime_dependency_paths from the dependency provider
         assert isinstance(self._dependency_provider, self.DependencyProvider)

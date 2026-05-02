@@ -190,7 +190,6 @@ class RustAnalyzer(SolidLanguageServer):
         super().__init__(
             config,
             repository_root_path,
-            None,
             "rust",
             solidlsp_settings,
         )

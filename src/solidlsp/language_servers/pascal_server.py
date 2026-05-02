@@ -61,10 +61,10 @@ import uuid
 import zipfile
 
 from solidlsp.language_servers.common import RuntimeDependency, RuntimeDependencyCollection, quote_windows_path
-from solidlsp.ls import SolidLanguageServer
+from solidlsp.ls import SimpleDependencyProvider, SolidLanguageServer
 from solidlsp.ls_config import Language, LanguageServerConfig
 from solidlsp.lsp_protocol_handler.lsp_types import InitializeParams
-from solidlsp.lsp_protocol_handler.server import ProcessLaunchInfo
+
 from solidlsp.settings import SolidLSPSettings
 
 log = logging.getLogger(__name__)
@@ -98,56 +98,47 @@ class PascalLanguageServer(SolidLanguageServer):
         Creates a PascalLanguageServer instance. This class is not meant to be instantiated directly.
         Use LanguageServer.create() instead.
         """
-        pasls_executable_path = self._setup_runtime_dependencies(solidlsp_settings)
+        super().__init__(config, repository_root_path, "pascal", solidlsp_settings)
+        self.server_ready = threading.Event()
+
+    def _create_dependency_provider(self):
+        pasls_executable_path = type(self)._setup_runtime_dependencies(self._solidlsp_settings)
 
         # Build environment variables for pasls
-        # These control CodeTools' configuration and target platform settings
         proc_env: dict[str, str] = {}
+        pascal_settings = self._custom_settings
 
-        # Read from ls_specific_settings["pascal"]
-        from solidlsp.ls_config import Language
-
-        pascal_settings = solidlsp_settings.get_ls_specific_settings(Language.PASCAL)
-
-        # pp: Path to FPC compiler driver (must be fpc.exe, NOT ppc386.exe/ppcx64.exe)
-        # CodeTools queries fpc.exe for configuration via "fpc -iV", "fpc -iTO", etc.
         pp = pascal_settings.get("pp", "")
         if pp:
             proc_env["PP"] = pp
             log.info(f"Setting PP={pp} from ls_specific_settings")
 
-        # fpcdir: Path to FPC source directory (e.g., "D:/laz32/fpcsrc")
         fpcdir = pascal_settings.get("fpcdir", "")
         if fpcdir:
             proc_env["FPCDIR"] = fpcdir
             log.info(f"Setting FPCDIR={fpcdir} from ls_specific_settings")
 
-        # lazarusdir: Path to Lazarus directory (e.g., "D:/laz32/lazarus")
         lazarusdir = pascal_settings.get("lazarusdir", "")
         if lazarusdir:
             proc_env["LAZARUSDIR"] = lazarusdir
             log.info(f"Setting LAZARUSDIR={lazarusdir} from ls_specific_settings")
 
-        # fpc_target: Override target OS (e.g., "Win32", "Win64", "Linux")
         fpc_target = pascal_settings.get("fpc_target", "")
         if fpc_target:
             proc_env["FPCTARGET"] = fpc_target
             log.info(f"Setting FPCTARGET={fpc_target} from ls_specific_settings")
 
-        # fpc_target_cpu: Override target CPU (e.g., "i386", "x86_64", "aarch64")
         fpc_target_cpu = pascal_settings.get("fpc_target_cpu", "")
         if fpc_target_cpu:
             proc_env["FPCTARGETCPU"] = fpc_target_cpu
             log.info(f"Setting FPCTARGETCPU={fpc_target_cpu} from ls_specific_settings")
 
-        super().__init__(
-            config,
-            repository_root_path,
-            ProcessLaunchInfo(cmd=pasls_executable_path, cwd=repository_root_path, env=proc_env),
-            "pascal",
-            solidlsp_settings,
+        return SimpleDependencyProvider(
+            cmd=pasls_executable_path,
+            env=proc_env,
+            custom_settings=self._custom_settings,
+            ls_resources_dir=self._ls_resources_dir,
         )
-        self.server_ready = threading.Event()
 
     # ============== Metadata Directory Management ==============
 

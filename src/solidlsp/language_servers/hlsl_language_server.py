@@ -47,7 +47,7 @@ class HlslLanguageServer(SolidLanguageServer):
     """
 
     def __init__(self, config: LanguageServerConfig, repository_root_path: str, solidlsp_settings: SolidLSPSettings) -> None:
-        super().__init__(config, repository_root_path, None, "hlsl", solidlsp_settings)
+        super().__init__(config, repository_root_path, "hlsl", solidlsp_settings)
 
     @override
     def _create_dependency_provider(self) -> LanguageServerDependencyProvider:
