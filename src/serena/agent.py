@@ -38,7 +38,7 @@ from serena.config.serena_config import (
     SerenaConfig,
     SerenaPaths,
 )
-from serena.dashboard import SerenaDashboardAPI, SerenaDashboardTrayManager, SerenaDashboardViewer, open_url_in_browser
+from serena.dashboard import DashboardPortFile, SerenaDashboardAPI, SerenaDashboardTrayManager, SerenaDashboardViewer, open_url_in_browser
 from serena.ls_manager import LanguageServerManager
 from serena.project import MemoriesManager, Project
 from serena.project_manager import ProjectManager
@@ -62,7 +62,6 @@ log = logging.getLogger(__name__)
 TTool = TypeVar("TTool", bound="Tool")
 T = TypeVar("T")
 SUCCESS_RESULT = "OK"
-
 
 class ProjectNotFoundError(Exception):
     pass
@@ -522,6 +521,8 @@ class SerenaAgent:
                 mode_str=self.serena_config.web_dashboard_interface,
             )
             log.info("Serena web dashboard started at %s", self._dashboard_manager.url)
+            # Persist dashboard port so the CLI restart-dashboard command can find it
+            DashboardPortFile.default().write(port)
             # inform the GUI window (if any)
             if self._gui_log_viewer is not None:
                 self._gui_log_viewer.set_dashboard_url(self._dashboard_manager.url)
@@ -560,6 +561,7 @@ class SerenaAgent:
 
         dashboard_host = host if host != "0.0.0.0" else "localhost"
         self._dashboard_url = f"http://{dashboard_host}:{port}/dashboard/index.html"
+        DashboardPortFile.default().write(port)
         log.info("Serena web dashboard restarted at %s", self._dashboard_url)
 
         # Update GUI window if present

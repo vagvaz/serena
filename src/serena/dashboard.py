@@ -152,6 +152,40 @@ class QueuedExecution(BaseModel):
         )
 
 
+class DashboardPortFile:
+    """Port file I/O for the dashboard, parameterized by path for testability.
+
+    Persists the dashboard's port number so CLI commands (e.g. restart-dashboard)
+    can locate the running dashboard without scanning a port range.
+    """
+
+    PORT_FILENAME = "dashboard.port"
+
+    def __init__(self, path: Path):
+        self.path = path
+
+    def write(self, port: int) -> None:
+        """Persist *port* to the port file."""
+        try:
+            with open(self.path, "w") as f:
+                f.write(str(port))
+        except OSError as e:
+            log.warning("Failed to write dashboard port file: %s", e)
+
+    def read(self) -> int | None:
+        """Read the persisted port, or *None* if unavailable."""
+        try:
+            with open(self.path) as f:
+                return int(f.read().strip())
+        except (OSError, ValueError):
+            return None
+
+    @classmethod
+    def default(cls) -> "DashboardPortFile":
+        """Create a ``DashboardPortFile`` at the standard location."""
+        return cls(Path(SerenaPaths().serena_user_home_dir) / cls.PORT_FILENAME)
+
+
 class ReadNews:
     def __init__(self, read_ids: list[str], legacy_last_read_id: str | None = None):
         self._read_ids = set(read_ids)
@@ -604,7 +638,7 @@ class SerenaDashboardAPI:
             )
 
         # Get all available tools (excluding active ones)
-        all_tool_names = sorted([tool.get_name_from_cls() for tool in self._agent._all_tools.values()])
+        all_tool_names = sorted([tool.get_name_from_cls() for tool in self._agent._tool_manager.all_tools.values()])
         available_tools: list[dict[str, str | bool]] = []
         for tool_name in all_tool_names:
             if tool_name not in active_tools:

@@ -195,7 +195,7 @@ class TestProjectBasics:
     def test_retrieve_content_around_line(self, project: Project):
         """Test retrieving content around specific lines"""
         # Test retrieving content around the greet function definition (line 2)
-        result = project.retrieve_content_around_line(CORE_PATH, 2, 2)
+        result = project.filesystem.retrieve_content_around_line(CORE_PATH, 2, 2)
 
         assert result is not None, "Should retrieve content around line 2"
         content_str = result.to_display_string()
@@ -203,7 +203,7 @@ class TestProjectBasics:
         assert "defn" in content_str, "Should contain defn keyword"
 
         # Test retrieving content around multiply function (around line 13)
-        result = project.retrieve_content_around_line(CORE_PATH, 13, 1)
+        result = project.filesystem.retrieve_content_around_line(CORE_PATH, 13, 1)
 
         assert result is not None, "Should retrieve content around line 13"
         content_str = result.to_display_string()
@@ -211,7 +211,7 @@ class TestProjectBasics:
 
     @pytest.mark.parametrize("project", [Language.CLOJURE], indirect=True)
     def test_search_files_for_pattern(self, project: Project) -> None:
-        result = project.search_source_files_for_pattern("defn.*greet")
+        result = project.filesystem.search_source_files_for_pattern("defn.*greet")
 
         assert result is not None, "Pattern search should return results"
         assert len(result) > 0, "Should find at least one match for 'defn.*greet'"
@@ -219,7 +219,7 @@ class TestProjectBasics:
         core_matches = [match for match in result if match.source_file_path and "core.clj" in match.source_file_path]
         assert len(core_matches) > 0, "Should find greet function in core.clj"
 
-        result = project.search_source_files_for_pattern(":require")
+        result = project.filesystem.search_source_files_for_pattern(":require")
 
         assert result is not None, "Should find require statements"
         utils_matches = [match for match in result if match.source_file_path and "utils.clj" in match.source_file_path]

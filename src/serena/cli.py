@@ -550,6 +550,8 @@ class TopLevelCommands(AutoRegisteringGroup):
         import urllib.error
         import urllib.request
 
+        from serena.dashboard import DashboardPortFile
+
         pid_file = os.path.join(SerenaPaths().serena_user_home_dir, "daemon.pid")
         if not os.path.exists(pid_file):
             click.echo("Serena daemon is not running (no PID file found).")
@@ -565,8 +567,13 @@ class TopLevelCommands(AutoRegisteringGroup):
             os.remove(pid_file)
             return
 
-        # Try the default dashboard port, then common fallbacks
-        ports_to_try = [24282, 24283, 24284, 24285]
+        # Read the persisted dashboard port, fall back to scanning
+        port = DashboardPortFile.default().read()
+        if port is not None:
+            ports_to_try = [port]
+        else:
+            ports_to_try = list(range(24282, 24300))
+
         for port in ports_to_try:
             url = f"http://127.0.0.1:{port}/restart_dashboard"
             try:
@@ -1117,7 +1124,7 @@ class ProjectCommands(AutoRegisteringGroup):
         try:
             log_file = os.path.join(proj.project_root, ".serena", "logs", "indexing.txt")
 
-            files = proj.gather_source_files()
+            files = proj.filesystem.gather_source_files()
 
             collected_exceptions: list[Exception] = []
             files_failed = []
@@ -1181,7 +1188,7 @@ class ProjectCommands(AutoRegisteringGroup):
         proj = Project.load(os.path.abspath(project), serena_config=serena_config)
         if os.path.isabs(path):
             path = os.path.relpath(path, start=proj.project_root)
-        is_ignored = proj.is_ignored_path(path)
+        is_ignored = proj.filesystem.is_ignored_path(path)
         click.echo(f"Path '{path}' IS {'ignored' if is_ignored else 'IS NOT ignored'} by the project configuration.")
 
     @staticmethod
@@ -1206,7 +1213,7 @@ class ProjectCommands(AutoRegisteringGroup):
         proj = Project.load(os.path.abspath(project), serena_config=serena_config)
         if os.path.isabs(file):
             file = os.path.relpath(file, start=proj.project_root)
-        if proj.is_ignored_path(file, ignore_non_source_files=True):
+        if proj.filesystem.is_ignored_path(file, ignore_non_source_files=True):
             click.echo(f"'{file}' is ignored or declared as non-code file by the project configuration, won't index.")
             exit(1)
         ls_mgr = proj.create_language_server_manager()
@@ -1268,7 +1275,7 @@ class ProjectCommands(AutoRegisteringGroup):
 
                 # Find first non-empty file that can be analyzed
                 log.info("Searching for analyzable files...")
-                files = proj.gather_source_files()
+                files = proj.filesystem.gather_source_files()
                 target_file = None
 
                 for file_path in files:
