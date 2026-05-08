@@ -25,6 +25,36 @@ Execution order:
 3. **apply_ex refactor** (#5) — last, after interfaces settle.
 4. **Concurrency tests** (#6) — parallel to all of the above.
 
+## Language: Debug
+
+**DAP Multiplexer**:
+A proxy that sits between the real debug adapter (debugpy, gdb -i dap) and multiple DAP clients, enabling a shared debug session.
+_Avoid_: Debug proxy, debug bridge
+
+**Driver**:
+The DAP client currently allowed to send mutating commands (step, continue, pause).
+_Avoid_: Controller, primary client
+
+**Eavesdropper**:
+A DAP client connected to the multiplexer that can read state (stack, variables, evaluate) but cannot send mutating commands.
+
+**Handoff**:
+Transfer of the driver role from one DAP client to another. The agent requests handoff via an HTTP endpoint; the human reclaims implicitly by sending any step/continue command.
+_Avoid_: Takeover, switch
+
+**Agent Breakpoints**:
+Breakpoints set by the agent in a collaborative session, automatically cleared when the human reclaims the driver role.
+
+## Relationships
+
+- The **Multiplexer** manages one **Driver** and zero or more **Eavesdroppers** per session
+- An **Agent Breakpoint** is only meaningful in a collaborative session; in autonomous triage, all breakpoints are "agent breakpoints" but none are auto-cleared
+- A **Handoff** changes which client is **Driver**; the previous Driver becomes an **Eavesdropper**
+
+## Flagged ambiguities
+
+- "debug session" was used to mean both "a DAP adapter running a process" and "the human working in their IDE" — resolved: these are two clients of the same **Multiplexer** session.
+
 ### 3. Server Layer (items 12, 13)
 
 Standalone, no ordering dependencies:
