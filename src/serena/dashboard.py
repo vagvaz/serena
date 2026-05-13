@@ -38,6 +38,13 @@ log = logging.getLogger(__name__)
 logging.getLogger("werkzeug").setLevel(logging.WARNING)
 
 
+class _ShutdownResponse(Exception):
+    """Raised when the agent is shutting down, carrying a Flask response to return."""
+
+    def __init__(self, response: Any) -> None:
+        self.response = response
+
+
 class RequestLog(BaseModel):
     start_idx: int = 0
     session_id: str | None = None
@@ -255,6 +262,7 @@ class SerenaDashboardAPI:
         self._loaded_news: dict[str, str] = {}
         self._news_ready = threading.Event()
         self._setup_routes()
+        self._app.register_error_handler(_ShutdownResponse, lambda e: e.response)
         self._read_news = ReadNews.load()
         # Fetch remote news in background on startup (non-blocking)
         threading.Thread(target=self._fetch_news, daemon=True).start()
@@ -262,6 +270,18 @@ class SerenaDashboardAPI:
     @property
     def memory_log_handler(self) -> MemoryLogHandler:
         return self._memory_log_handler
+
+    def _execute_task_safe(self, task: Callable[[], Any], **kwargs: Any) -> Any:
+        """Execute a task via the agent, returning a 503 response dict if the agent is shutting down."""
+        try:
+            return self._agent.execute_task(task, **kwargs)
+        except RuntimeError as e:
+            if "shutting down" in str(e):
+                from flask import jsonify, make_response
+
+                response = make_response(jsonify({"status": "error", "message": "Agent is shutting down"}), 503)
+                raise _ShutdownResponse(response) from e
+            raise
 
     def _setup_routes(self) -> None:
         @self._app.route("/")
@@ -321,7 +341,7 @@ class SerenaDashboardAPI:
 
         @self._app.route("/get_config_overview", methods=["GET"])
         def get_config_overview() -> dict[str, Any]:
-            result = self._agent.execute_task(self._get_config_overview, logged=False)
+            result = self._execute_task_safe(self._get_config_overview, logged=False)
             return result.model_dump()
 
         @self._app.route("/shutdown", methods=["PUT"])
@@ -331,7 +351,7 @@ class SerenaDashboardAPI:
 
         @self._app.route("/restart_dashboard", methods=["POST"])
         def restart_dashboard() -> dict[str, str]:
-            result = self._agent.execute_task(self._agent.restart_dashboard, logged=False)
+            result = self._execute_task_safe(self._agent.restart_dashboard, logged=False)
             return {"status": "success", "message": result}
 
         @self._app.route("/get_available_languages", methods=["GET"])
@@ -743,7 +763,7 @@ class SerenaDashboardAPI:
 
             return ResponseAvailableLanguages(languages=sorted(available_languages))
 
-        return self._agent.execute_task(run, logged=False)
+        return self._execute_task_safe(run, logged=False)
 
     def _get_memory(self, request_get_memory: RequestGetMemory) -> ResponseGetMemory:
         def run() -> ResponseGetMemory:
@@ -754,7 +774,7 @@ class SerenaDashboardAPI:
             content = project.memories_manager.load_memory(request_get_memory.memory_name)
             return ResponseGetMemory(content=content, memory_name=request_get_memory.memory_name)
 
-        return self._agent.execute_task(run, logged=False)
+        return self._execute_task_safe(run, logged=False)
 
     def _save_memory(self, request_save_memory: RequestSaveMemory) -> None:
         def run() -> None:
@@ -763,7 +783,7 @@ class SerenaDashboardAPI:
                 raise ValueError("No active project")
             project.memories_manager.save_memory(request_save_memory.memory_name, request_save_memory.content, is_tool_context=False)
 
-        self._agent.execute_task(run, logged=True, name="SaveMemory")
+        self._execute_task_safe(run, logged=True, name="SaveMemory")
 
     def _delete_memory(self, request_delete_memory: RequestDeleteMemory) -> None:
         def run() -> None:
@@ -772,7 +792,7 @@ class SerenaDashboardAPI:
                 raise ValueError("No active project")
             project.memories_manager.delete_memory(request_delete_memory.memory_name, is_tool_context=False)
 
-        self._agent.execute_task(run, logged=True, name="DeleteMemory")
+        self._execute_task_safe(run, logged=True, name="DeleteMemory")
 
     def _rename_memory(self, request_rename_memory: RequestRenameMemory) -> str:
         def run() -> str:
@@ -784,7 +804,7 @@ class SerenaDashboardAPI:
                 request_rename_memory.old_name, request_rename_memory.new_name, is_tool_context=False
             )
 
-        return self._agent.execute_task(run, logged=True, name="RenameMemory")
+        return self._execute_task_safe(run, logged=True, name="RenameMemory")
 
     def _get_serena_config(self) -> ResponseGetSerenaConfig:
         config_path = self._agent.serena_config.config_file_path
@@ -805,7 +825,7 @@ class SerenaDashboardAPI:
             with open(config_path, "w", encoding="utf-8") as f:
                 f.write(request_save_config.content)
 
-        self._agent.execute_task(run, logged=True, name="SaveSerenaConfig")
+        self._execute_task_safe(run, logged=True, name="SaveSerenaConfig")
 
     # ===== Remote News Methods =====
 

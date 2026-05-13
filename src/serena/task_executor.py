@@ -59,6 +59,7 @@ class TaskExecutor:
         self._project_locks: dict[str, ReadWriteLock] = {}
         self._task_index = 1
         self._last_executed_task_info: TaskExecutor.TaskInfo | None = None
+        self._shutting_down = False
 
     class Task(ToStringMixin, Generic[T]):
         def __init__(
@@ -160,6 +161,8 @@ class TaskExecutor:
         read_only: bool = False,
         session_id: str | None = None,
     ) -> "TaskExecutor.Task[T]":
+        if self._shutting_down:
+            raise RuntimeError("Task executor is shutting down")
         with self._lock:
             task_number = self._task_index
             self._task_index += 1
@@ -217,7 +220,12 @@ class TaskExecutor:
                     else:
                         lock.release_write()
 
-        future = self._executor.submit(runner)
+        try:
+            future = self._executor.submit(runner)
+        except RuntimeError as e:
+            if "cannot schedule new futures after shutdown" in str(e):
+                raise RuntimeError("Task executor is shutting down") from e
+            raise
         task_obj.future = future
 
         def _on_complete(fut: Future) -> None:
@@ -258,4 +266,5 @@ class TaskExecutor:
             return self._last_executed_task_info
 
     def shutdown(self) -> None:
+        self._shutting_down = True
         self._executor.shutdown(wait=False)

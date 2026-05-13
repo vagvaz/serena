@@ -1296,6 +1296,8 @@ class SerenaAgent:
         if hasattr(self, '_dashboard_manager') and self._dashboard_manager is not None:
             self._dashboard_manager.shutdown()
             self._dashboard_manager = None
+        if hasattr(self, '_task_executor') and self._task_executor is not None:
+            self._task_executor.shutdown()
 
     def shutdown(self) -> None:
         """
