@@ -405,6 +405,28 @@ class TopLevelCommands(AutoRegisteringGroup):
         if auto_register and not (daemon or daemon_child):
             raise click.UsageError("--auto-register can only be used together with --daemon.")
 
+        # Daemon mode: spawn a background subprocess early, before heavy initialization
+        # This avoids the parent process doing unnecessary agent/LSP initialization
+        # and then getting stuck due to non-daemon background threads.
+        if daemon:
+            _start_daemon(
+                port=port,
+                log_path=log_path,
+                context=context,
+                project_file=project_file,
+                modes=default_modes,
+                added_modes=added_modes,
+                language_backend=language_backend,
+                enable_web_dashboard=enable_web_dashboard,
+                open_web_dashboard=open_web_dashboard,
+                enable_gui_log_window=enable_gui_log_window,
+                log_level=log_level,
+                trace_lsp_communication=trace_lsp_communication,
+                tool_timeout=tool_timeout,
+                auto_register=auto_register,
+            )
+            return
+
         mode_selection_def: ModeSelectionDefinition | None = None
         if default_modes or added_modes:
             mode_selection_def = ModeSelectionDefinitionWithAddedModes(default_modes=default_modes or None, added_modes=added_modes or None)
@@ -447,26 +469,6 @@ class TopLevelCommands(AutoRegisteringGroup):
 
             signal.signal(signal.SIGTERM, _cleanup_pid)
             signal.signal(signal.SIGINT, _cleanup_pid)
-
-        # Daemon mode: spawn a background subprocess
-        if daemon:
-            _start_daemon(
-                port=port,
-                log_path=log_path,
-                context=context,
-                project_file=project_file,
-                modes=default_modes,
-                added_modes=added_modes,
-                language_backend=language_backend,
-                enable_web_dashboard=enable_web_dashboard,
-                open_web_dashboard=open_web_dashboard,
-                enable_gui_log_window=enable_gui_log_window,
-                log_level=log_level,
-                trace_lsp_communication=trace_lsp_communication,
-                tool_timeout=tool_timeout,
-                auto_register=auto_register,
-            )
-            return
 
         log.info("Starting MCP server …")
         server.run(transport=transport)
