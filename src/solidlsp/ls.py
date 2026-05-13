@@ -14,7 +14,8 @@ from contextlib import contextmanager
 from copy import copy
 from pathlib import Path, PurePath
 from time import perf_counter, sleep
-from typing import Any, Optional, Self, Union, cast
+from typing import Any, Optional, Union, cast
+from typing_extensions import Self
 
 import pathspec
 from serena.util.pickle_utils import getstate, load_pickle

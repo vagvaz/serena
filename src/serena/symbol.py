@@ -6,7 +6,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import asdict, dataclass
 from time import perf_counter
-from typing import Any, Generic, Literal, NotRequired, Self, TypedDict, TypeVar
+from typing import Any, Generic, Literal, NotRequired, TypedDict, TypeVar
+from typing_extensions import Self
 
 from serena.util.string_utils import ToStringMixin
 

@@ -7,7 +7,8 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from functools import cached_property
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Iterator, Protocol, Self, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Iterator, Protocol, TypeVar, cast
+from typing_extensions import Self
 
 from mcp import Implementation
 from mcp.server.fastmcp import Context

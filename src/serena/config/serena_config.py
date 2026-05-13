@@ -9,11 +9,12 @@ import shutil
 from collections.abc import Iterator, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Optional, TypeVar
+from typing_extensions import Self
 
 import yaml
 from ruamel.yaml.comments import CommentedMap
@@ -794,7 +795,7 @@ class SerenaConfig(SharedConfig, ModeSelectionDefinitionWithBaseModes):
         # for unix systems st_ctime is the inode change time (change of metadata),
         # which is good enough for our purposes
         creation_timestamp = os.stat(config_file_path).st_ctime
-        return datetime.fromtimestamp(creation_timestamp, UTC)
+        return datetime.fromtimestamp(creation_timestamp, timezone.utc)
 
     @property
     def config_file_path(self) -> str | None:

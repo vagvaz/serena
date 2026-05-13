@@ -10,7 +10,8 @@ import threading
 from concurrent.futures.thread import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal, Optional, Self, TypeVar, cast
+from typing import Any, Literal, Optional, TypeVar, cast
+from typing_extensions import Self
 
 import requests
 from requests import Response

@@ -12,7 +12,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from html import escape
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional, Self
+from typing import TYPE_CHECKING, Any, Optional
+from typing_extensions import Self
 
 import psutil
 from flask import Flask, Response, redirect, request, send_from_directory

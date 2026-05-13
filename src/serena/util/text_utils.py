@@ -4,8 +4,9 @@ import os
 import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from enum import StrEnum
-from typing import Any, Literal, Self
+from enum import Enum
+from typing import Any, Literal
+from typing_extensions import Self
 
 from bs4 import BeautifulSoup
 from joblib import Parallel, delayed
@@ -16,7 +17,7 @@ from solidlsp.ls_utils import TextUtils
 log = logging.getLogger(__name__)
 
 
-class LineType(StrEnum):
+class LineType(str, Enum):
     """Enum for different types of lines in search results."""
 
     MATCH = "match"

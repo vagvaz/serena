@@ -5,7 +5,8 @@ Context and Mode configuration loader
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Self
+from typing import TYPE_CHECKING
+from typing_extensions import Self
 
 import yaml
 import logging
