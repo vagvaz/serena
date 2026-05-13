@@ -253,7 +253,7 @@ class ProjectManager:
                 with LogTime("Language server initialization", logger=log):
                     project.create_language_server_manager()
 
-            self._task_executor.issue_task(_init_ls)
+            self._task_executor.issue_task(_init_ls, project=project.project_name, read_only=True)
 
         if notify and self._on_projects_changed is not None:
             self._on_projects_changed()
