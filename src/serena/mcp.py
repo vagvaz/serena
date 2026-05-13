@@ -172,24 +172,47 @@ class SerenaMCPFactory:
             title=tool_title,
         )
 
-    @staticmethod
-    def _cwd_middleware_dispatch(request: Any, call_next: Any) -> Any:
+    class _CwdCaptureMiddleware:
         """
-        Starlette middleware dispatch that extracts ``cwd`` from the HTTP
-        request (query param ``?cwd=`` or header ``X-Cwd``) and stores it in
-        ``_connection_cwd`` for the :meth:`server_lifespan` to consume.
+        Raw ASGI middleware that extracts ``cwd`` from the HTTP request
+        (query param ``?cwd=`` or header ``X-Cwd`` / ``X-Project``) and
+        stores it in ``_connection_cwd`` for the lifespan to consume.
 
         This runs once per HTTP request to the Starlette app (both SSE GET
         and message POST), but only the SSE lifespan path reads the value.
+
+        Using a plain ASGI middleware (instead of :class:`BaseHTTPMiddleware`)
+        avoids implicit ``anyio.to_thread.run_sync`` wrapping and keeps the
+        middleware compatible with streaming SSE responses.
         """
-        cwd = (
-            request.query_params.get("cwd")
-            or request.headers.get("X-Cwd")
-            or request.headers.get("X-Project")
-        )
-        if cwd:
-            _connection_cwd.set(os.path.normpath(cwd))
-        return call_next(request)
+
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: dict, receive: Any, send: Any) -> None:
+            if scope["type"] == "http":
+                cwd = self._extract_cwd(scope)
+                if cwd:
+                    _connection_cwd.set(os.path.normpath(cwd))
+            await self.app(scope, receive, send)
+
+        @staticmethod
+        def _extract_cwd(scope: dict) -> str | None:
+            # 1. query string
+            qs = scope.get("query_string", b"")
+            if qs:
+                from urllib.parse import parse_qs
+
+                params = parse_qs(qs.decode("latin-1"))
+                cwd = params.get("cwd", [None])[0]
+                if cwd:
+                    return cwd
+
+            # 2. headers
+            for name, value in scope.get("headers", []):
+                if name.lower() in (b"x-cwd", b"x-project"):
+                    return value.decode("latin-1")
+            return None
 
     def _patch_sse_app(self, mcp: FastMCP) -> None:
         """
@@ -210,10 +233,7 @@ class SerenaMCPFactory:
 
             starlette_app = self_fastmcp.sse_app(mount_path)
 
-            # Add CWD capture middleware (wraps all routes)
-            from starlette.middleware.base import BaseHTTPMiddleware
-
-            starlette_app.add_middleware(BaseHTTPMiddleware, dispatch=self._cwd_middleware_dispatch)  # type: ignore[arg-type]
+            starlette_app.add_middleware(self._CwdCaptureMiddleware)
 
             config = uvicorn.Config(
                 starlette_app,
