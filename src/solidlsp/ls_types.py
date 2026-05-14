@@ -5,10 +5,10 @@ Defines wrapper objects around the types returned by LSP to ensure decoupling be
 from __future__ import annotations
 
 from enum import Enum, IntEnum
-from typing import TYPE_CHECKING, NotRequired, Union
+from typing import TYPE_CHECKING, Union
 
 from serena.util.misc import mark_used
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 from solidlsp.lsp_protocol_handler.lsp_types import DiagnosticSeverity, SymbolKind
 

@@ -10,9 +10,9 @@ This file provides the Python types corresponding to the Typescript types define
 """
 
 from enum import Enum, IntEnum, IntFlag
-from typing import Any, Literal, NotRequired, Union
+from typing import Any, Literal, Union
 
-from typing_extensions import TypedDict
+from typing_extensions import NotRequired, TypedDict
 
 URI = str
 DocumentUri = str
