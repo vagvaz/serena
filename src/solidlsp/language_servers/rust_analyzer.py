@@ -736,4 +736,8 @@ class RustAnalyzer(SolidLanguageServer):
         }
         self.server.notify.initialized({})
 
-        self.server_ready.wait()
+        if not self.server_ready.wait(timeout=60.0):
+            log.warning(
+                "Rust Analyzer server did not signal readiness within 60s (missing experimental/serverStatus notification). "
+                "Proceeding anyway — the server may still be functional."
+            )

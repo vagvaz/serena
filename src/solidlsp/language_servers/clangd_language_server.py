@@ -415,4 +415,8 @@ class ClangdLanguageServer(SolidLanguageServer):
         # Wait for the server to actually be ready (signalled by
         # the ``experimental/serverStatus`` notification handler in
         # ``check_experimental_status`` when ``quiescent == True``).
-        self.server_ready.wait()
+        if not self.server_ready.wait(timeout=60.0):
+            log.warning(
+                "Clangd server did not signal readiness within 60s (missing experimental/serverStatus notification). "
+                "Proceeding anyway — the server may still be functional."
+            )
