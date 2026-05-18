@@ -583,3 +583,49 @@ jobs:
       - name: Type-checking with mypy
         shell: bash
         run: uv run poe type-check
+
+  python310-compat:
+    name: Python 3.10 compatibility
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        shell: bash
+        run: curl -LsSf https://astral.sh/uv/install.sh | sh
+      - name: Create virtual environment
+        shell: bash
+        run: uv venv
+      - name: Install Python environment
+        shell: bash
+        run: uv sync --extra dev --locked
+      - name: Verify all modules import on Python 3.10
+        shell: bash
+        run: |
+          uv run python -c "
+          import serena.cli
+          import serena.mcp
+          import serena.agent
+          import serena.project
+          import serena.ls_manager
+          import serena.config.serena_config
+          import serena.config.context_mode
+          import serena.tools.tools_base
+          import serena.util.logging
+          import serena.util.text_utils
+          import serena.symbol
+          import serena.dashboard
+          import serena.hooks
+          import solidlsp.ls
+          import solidlsp.ls_config
+          import solidlsp.ls_types
+          import solidlsp.language_servers.clangd_language_server
+          import solidlsp.language_servers.rust_analyzer
+          print('All modules imported successfully on Python 3.10')
+          "
+      - name: Run unit tests (no language servers required)
+        shell: bash
+        run: uv run poe test -q --tb=short -m "not cpp and not csharp and not fsharp and not go and not haxe and not java and not kotlin and not lean4 and not msl and not php and not powershell and not python and not rust and not typescript and not clojure and not yaml and not ansible and not dart and not erlang and not elm and not fortran and not groovy and not haskell and not hlsl and not julia and not lua and not luau and not matlab and not nix and not ocaml and not pascal and not perl and not r and not ruby and not scala and not solidity and not swift and not systemverilog and not terraform and not zig and not vue and not elixir and not bash and not json and not toml and not markdown and not al" test/serena/
