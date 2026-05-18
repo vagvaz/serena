@@ -2,6 +2,7 @@ import logging
 
 import pytest
 
+from serena.util.logging import get_level_names_mapping
 from solidlsp import SolidLanguageServer
 from solidlsp.language_servers.clangd_language_server import ClangdLanguageServer
 
@@ -25,7 +26,7 @@ class TestClangdLogging:
         expected Python logging level and avoids misclassifying compile-command
         payloads as ERROR.
         """
-        assert ClangdLanguageServer._determine_log_level(line) == logging.getLevelNamesMapping()[expected]
+        assert ClangdLanguageServer._determine_log_level(line) == get_level_names_mapping()[expected]
 
     def test_log_record_info_payload_mentions_fno_exceptions(self) -> None:
         line = """clang++ -fno-exceptions -c no_exceptions.cpp"""

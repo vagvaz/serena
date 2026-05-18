@@ -14,7 +14,7 @@ from typing import Any, Literal
 
 import click
 import logging
-from serena.util.logging import FileLoggerContext, datetime_tag
+from serena.util.logging import FileLoggerContext, datetime_tag, get_level_names_mapping
 from serena.util.string_utils import dict_string
 from tqdm import tqdm
 
@@ -737,7 +737,7 @@ def _start_daemon(
         prefix = "You will receive access to Serena's symbolic tools. Below are instructions for using them, take them into account."
         postfix = "You begin by acknowledging that you understood the above instructions and are ready to receive tasks."
 
-        lvl = logging.getLevelNamesMapping()[log_level.upper()]
+        lvl = get_level_names_mapping()[log_level.upper()]
         logging.basicConfig(level=lvl, format=SERENA_LOG_FORMAT)
         context_instance = SerenaAgentContext.load(context)
         modes_selection_def: ModeSelectionDefinition | None = None
@@ -804,7 +804,7 @@ def _start_daemon(
         Logger.root.addHandler(file_handler)
 
         if log_level is not None:
-            Logger.root.setLevel(logging.getLevelNamesMapping()[log_level])
+            Logger.root.setLevel(get_level_names_mapping()[log_level])
 
         log.info("Starting Serena project server")
         log.info("Storing logs in %s", log_path)
@@ -1117,7 +1117,7 @@ class ProjectCommands(AutoRegisteringGroup):
 
     @staticmethod
     def _index_project(registered_project: RegisteredProject, log_level: str, timeout: float, resume: bool = False) -> None:
-        lvl = logging.getLevelNamesMapping()[log_level.upper()]
+        lvl = get_level_names_mapping()[log_level.upper()]
         logging.basicConfig(level=lvl, format=SERENA_LOG_FORMAT)
         serena_config = SerenaConfig.from_config_file()
         proj = registered_project.get_project_instance(serena_config=serena_config)

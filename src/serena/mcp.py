@@ -19,6 +19,8 @@ from mcp.types import ToolAnnotations
 from pydantic_settings import SettingsConfigDict
 import logging
 
+from serena.util.logging import get_level_names_mapping
+
 from serena.agent import (
     ProjectNotFoundError,
     SerenaAgent,
@@ -325,7 +327,7 @@ class SerenaMCPFactory:
                 config.web_dashboard_open_on_launch = open_web_dashboard
             if log_level is not None:
                 log_level = cast(Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], log_level.upper())
-                config.log_level = logging.getLevelNamesMapping()[log_level]
+                config.log_level = get_level_names_mapping()[log_level]
             if trace_lsp_communication is not None:
                 config.trace_lsp_communication = trace_lsp_communication
             if tool_timeout is not None:

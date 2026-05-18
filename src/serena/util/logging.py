@@ -13,6 +13,29 @@ from typing import Optional
 
 from serena.constants import LOG_MESSAGES_BUFFER_SIZE, SERENA_LOG_FORMAT
 
+# Python 3.10 compatibility: logging.getLevelNamesMapping() was added in 3.11
+_LEVEL_NAMES_MAPPING: dict[str, int] | None = None
+
+
+def get_level_names_mapping() -> dict[str, int]:
+    """Return a mapping of level names to integer values (Python 3.10 compatible)."""
+    global _LEVEL_NAMES_MAPPING
+    if _LEVEL_NAMES_MAPPING is None:
+        if hasattr(logging, "getLevelNamesMapping"):
+            _LEVEL_NAMES_MAPPING = logging.getLevelNamesMapping()
+        else:
+            _LEVEL_NAMES_MAPPING = {
+                "CRITICAL": logging.CRITICAL,
+                "FATAL": logging.FATAL,
+                "ERROR": logging.ERROR,
+                "WARN": logging.WARNING,
+                "WARNING": logging.WARNING,
+                "INFO": logging.INFO,
+                "DEBUG": logging.DEBUG,
+                "NOTSET": logging.NOTSET,
+            }
+    return _LEVEL_NAMES_MAPPING
+
 _log_session_id: ContextVar[str | None] = ContextVar("serena_log_session_id", default=None)
 _log_project_name: ContextVar[str | None] = ContextVar("serena_log_project_name", default=None)
 
