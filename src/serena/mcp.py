@@ -145,6 +145,17 @@ class SerenaMCPFactory:
         }
         parameters.setdefault("properties", {})["cwd"] = cwd_property
 
+        # Also add cwd to the arg_model Pydantic model, which the MCP SDK uses for validation.
+        # Without this, clients sending cwd get "Invalid request parameters" (-32602).
+        from pydantic import create_model
+        original_model = func_arg_metadata.arg_model
+        arg_model_with_cwd = create_model(
+            original_model.__name__,
+            __base__=original_model,
+            cwd=(str | None, None),
+        )
+        func_arg_metadata = func_arg_metadata.model_copy(update={"arg_model": arg_model_with_cwd})
+
         def execute_fn(**kwargs) -> str:  # type: ignore
             cwd = kwargs.pop("cwd", None)
             return tool.apply_ex(log_call=True, catch_exceptions=True, cwd=cwd, **kwargs)

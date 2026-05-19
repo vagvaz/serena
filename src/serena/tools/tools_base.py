@@ -198,15 +198,20 @@ class Tool(Component):
     @cached_property
     def _is_session_aware(self) -> bool:
         """
-        :return: whether the tool is session-aware, i.e. whether the apply method expects a session_id (str) parameter.
+        :return: whether the tool is session-aware, i.e. whether the apply method expects
+            the MCP session_id parameter (injected at runtime).
+            Returns False for tools where session_id is a user-provided parameter (e.g., debug session ID).
         """
         # check apply method for session_id arg
         apply_fn = self.get_apply_fn()
         sig = inspect.signature(apply_fn)
-        for param in sig.parameters.values():
-            if param.name == self.SESSION_ID_PARAM_NAME:
-                return True
-        return False
+        params = list(sig.parameters.keys())
+        if self.SESSION_ID_PARAM_NAME not in params:
+            return False
+        # session_id is MCP session ID only if there are other params before it (excluding self)
+        idx = params.index(self.SESSION_ID_PARAM_NAME)
+        params_before = [p for p in params[:idx] if p != "self"]
+        return bool(params_before)
 
     @staticmethod
     def _sanitize_input_param(raw_param: str) -> str:
@@ -296,7 +301,22 @@ class Tool(Component):
             if apply_fn is None:
                 raise AttributeError(f"apply method not defined in {cls}. Did you forget to implement it?")
 
-        return func_metadata(apply_fn, skip_names=["self", "cls", cls.SESSION_ID_PARAM_NAME])
+        # Determine skip names: always skip self/cls, and skip session_id only when it's
+        # the MCP session ID (injected at runtime), not a user-provided parameter like debug session ID.
+        # Heuristic: if session_id is the first parameter after self, it's user-provided (e.g., debug tools).
+        # If it appears later (after other params like project), it's the MCP session ID.
+        import inspect
+        sig = inspect.signature(apply_fn)
+        params = list(sig.parameters.keys())
+        skip_names = ["self", "cls"]
+        if cls.SESSION_ID_PARAM_NAME in params:
+            idx = params.index(cls.SESSION_ID_PARAM_NAME)
+            # session_id is MCP session ID if there are other params before it (excluding self)
+            params_before = [p for p in params[:idx] if p != "self"]
+            if params_before:
+                skip_names.append(cls.SESSION_ID_PARAM_NAME)
+
+        return func_metadata(apply_fn, skip_names=skip_names)
 
     def _log_tool_application(self, frame: Any, session_id: str) -> None:
         params = {}
@@ -522,6 +542,10 @@ class Tool(Component):
                         )
 
                 try:
+                    # Inject session_id into kwargs for session-aware tools
+                    # (session_id is skipped from the MCP schema but required by the apply method)
+                    if self._is_session_aware and Tool.SESSION_ID_PARAM_NAME not in kwargs:
+                        kwargs[Tool.SESSION_ID_PARAM_NAME] = session_id
                     result = apply_fn(**kwargs)
                 except SolidLSPException as e:
                     if e.is_language_server_terminated():
